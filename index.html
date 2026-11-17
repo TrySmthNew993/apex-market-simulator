@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0B0E11" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>ApexEX — Crypto &amp; Equities Simulator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <!-- Top App Header -->
+    <header class="app-header">
+      <div class="brand-group">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L20 7V17L12 22L4 17V7L12 2Z" stroke="#F0B90B" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M12 7L16.5 9.6V14.4L12 17L7.5 14.4V9.6L12 7Z" fill="#F0B90B"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">APEX<span class="brand-sub">SIM</span></span>
+          <span id="regime-pill" class="regime-pill">NEUTRAL</span>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <div class="sim-speed-group" role="group" aria-label="Simulation speed">
+          <button class="speed-btn" data-speed="0" title="Pause market">II</button>
+          <button class="speed-btn active" data-speed="1">1x</button>
+          <button class="speed-btn" data-speed="2">2x</button>
+          <button class="speed-btn" data-speed="5">5x</button>
+        </div>
+        <button id="header-equity-btn" class="equity-chip" title="View portfolio">
+          <span class="equity-label">Eq</span>
+          <span id="header-equity-val" class="tabular">$10,000.00</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Live Breaking Market News Ticker -->
+    <div id="news-bar" class="news-bar" role="button" tabindex="0" aria-label="Latest market event">
+      <span class="news-tag">LIVE</span>
+      <span id="news-bar-text" class="news-text">Markets open. Spot liquidity active across Crypto and US Equities.</span>
+      <span class="news-arrow">›</span>
+    </div>
+
+    <!-- Main Scrollable Viewport -->
+    <main class="main-content">
+      <!-- VIEW 1: MARKETS -->
+      <section id="view-markets" class="view active" aria-label="Markets">
+        <!-- Market Summary Cards -->
+        <div class="market-overview-strip">
+          <div class="overview-card">
+            <div class="ov-label">Crypto Cap</div>
+            <div id="ov-crypto-cap" class="ov-val tabular">$2.94T</div>
+            <div id="ov-crypto-chg" class="ov-sub up tabular">+1.42%</div>
+          </div>
+          <div class="overview-card">
+            <div class="ov-label">Equities Index</div>
+            <div id="ov-stock-idx" class="ov-val tabular">5,942.10</div>
+            <div id="ov-stock-chg" class="ov-sub up tabular">+0.68%</div>
+          </div>
+          <div class="overview-card">
+            <div class="ov-label">Sentiment</div>
+            <div id="ov-sentiment-val" class="ov-val tabular">58</div>
+            <div id="ov-sentiment-txt" class="ov-sub neutral">Balanced</div>
+          </div>
+        </div>
+
+        <!-- Search + Category Tabs -->
+        <div class="markets-toolbar">
+          <div class="search-box">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+            </svg>
+            <input id="market-search" type="search" placeholder="Search BTC, NVDA, AAPL..." autocomplete="off" />
+          </div>
+          <div class="cat-tabs" role="tablist">
+            <button class="cat-tab active" data-cat="all">All</button>
+            <button class="cat-tab" data-cat="crypto">Crypto</button>
+            <button class="cat-tab" data-cat="stock">Companies</button>
+            <button class="cat-tab" data-cat="fav">Watchlist</button>
+          </div>
+        </div>
+
+        <!-- Table Header -->
+        <div class="market-list-head">
+          <button class="sort-btn left" data-sort="name">Name / Vol <span class="sort-ind"></span></button>
+          <button class="sort-btn right" data-sort="price">Last Price <span class="sort-ind"></span></button>
+          <button class="sort-btn right chg-col" data-sort="change">24h Chg% <span class="sort-ind"></span></button>
+        </div>
+
+        <!-- Market Rows -->
+        <div id="market-list" class="market-list"></div>
+      </section>
+
+      <!-- VIEW 2: TRADE -->
+      <section id="view-trade" class="view" aria-label="Trade">
+        <!-- Pair Header Bar -->
+        <div class="trade-pair-bar">
+          <button id="pair-selector-btn" class="pair-selector-btn">
+            <span id="trade-symbol" class="pair-name">BTC/USDT</span>
+            <span id="trade-kind-badge" class="kind-badge">CRYPTO</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
+          <div class="pair-stats-right">
+            <div id="trade-price" class="trade-main-price tabular">$91,420.00</div>
+            <div id="trade-chg" class="trade-main-chg up tabular">+1.84%</div>
+          </div>
+          <button id="trade-fav-btn" class="icon-btn" title="Toggle watchlist" aria-label="Toggle watchlist">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Compact 24h Stats Strip -->
+        <div class="ticker-stats-strip">
+          <div class="t-stat"><span>24h High</span><strong id="stat-high" class="tabular">--</strong></div>
+          <div class="t-stat"><span>24h Low</span><strong id="stat-low" class="tabular">--</strong></div>
+          <div class="t-stat"><span>24h Vol</span><strong id="stat-vol" class="tabular">--</strong></div>
+          <div class="t-stat"><span>Sector</span><strong id="stat-sector">--</strong></div>
+        </div>
+
+        <!-- Collapsible Chart Panel -->
+        <div class="chart-panel">
+          <div class="chart-toolbar">
+            <div class="tf-pills" role="group" aria-label="Timeframe">
+              <button class="tf-btn active" data-tf="1m">1m</button>
+              <button class="tf-btn" data-tf="5m">5m</button>
+              <button class="tf-btn" data-tf="15m">15m</button>
+              <button class="tf-btn" data-tf="1h">1h</button>
+              <button class="tf-btn" data-tf="1D">1D</button>
+            </div>
+            <div class="chart-type-pills">
+              <button class="ctype-btn active" data-ctype="candle">Candle</button>
+              <button class="ctype-btn" data-ctype="line">Line</button>
+              <button id="chart-collapse-btn" class="ctype-btn" title="Toggle chart height">▾</button>
+            </div>
+          </div>
+
+          <!-- OHLC Readout Strip -->
+          <div id="ohlc-strip" class="ohlc-strip tabular">
+            <span>O <b id="ohlc-o">--</b></span>
+            <span>H <b id="ohlc-h">--</b></span>
+            <span>L <b id="ohlc-l">--</b></span>
+            <span>C <b id="ohlc-c">--</b></span>
+            <span class="ma7">MA7 <b id="ohlc-ma7">--</b></span>
+            <span class="ma25">MA25 <b id="ohlc-ma25">--</b></span>
+          </div>
+
+          <div id="chart-container" class="chart-container">
+            <canvas id="price-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- Split Order Form + Order Book (Bybit / OKX / Binance Mobile Layout) -->
+        <div class="trade-split-grid">
+          <!-- Left: Order Entry -->
+          <div class="order-entry-col">
+            <div class="side-toggle">
+              <button id="btn-side-buy" class="side-btn buy active">Buy</button>
+              <button id="btn-side-sell" class="side-btn sell">Sell</button>
+            </div>
+
+            <div class="order-type-row">
+              <select id="order-type" class="order-type-select" aria-label="Order type">
+                <option value="market">Market</option>
+                <option value="limit">Limit</option>
+              </select>
+              <span class="fee-tag">Fee 0.1%</span>
+            </div>
+
+            <!-- Price Input -->
+            <div id="price-input-wrap" class="input-group disabled">
+              <div class="input-label-row">
+                <span>Price (USD)</span>
+                <button id="fill-best-price" class="mini-link" type="button">Last</button>
+              </div>
+              <div class="stepper-box">
+                <button id="price-dec" class="step-btn" type="button">−</button>
+                <input id="order-price" type="number" step="any" inputmode="decimal" disabled />
+                <button id="price-inc" class="step-btn" type="button">+</button>
+              </div>
+            </div>
+
+            <!-- Quantity Input -->
+            <div class="input-group">
+              <div class="input-label-row">
+                <span>Amount (<span id="qty-unit-sym">BTC</span>)</span>
+              </div>
+              <div class="stepper-box">
+                <button id="qty-dec" class="step-btn" type="button">−</button>
+                <input id="order-qty" type="number" step="any" inputmode="decimal" placeholder="0.00" />
+                <button id="qty-inc" class="step-btn" type="button">+</button>
+              </div>
+            </div>
+
+            <!-- Percentage Presets -->
+            <div class="pct-grid">
+              <button class="pct-btn" data-pct="0.25" type="button">25%</button>
+              <button class="pct-btn" data-pct="0.50" type="button">50%</button>
+              <button class="pct-btn" data-pct="0.75" type="button">75%</button>
+              <button class="pct-btn" data-pct="1.00" type="button">100%</button>
+            </div>
+
+            <!-- Total Input -->
+            <div class="input-group">
+              <div class="input-label-row">
+                <span>Total (USD)</span>
+              </div>
+              <div class="stepper-box plain">
+                <input id="order-total" type="number" step="any" inputmode="decimal" placeholder="0.00" />
+              </div>
+            </div>
+
+            <div class="avail-row">
+              <span class="avail-lbl">Avail</span>
+              <span id="avail-balance" class="avail-val tabular">$10,000.00</span>
+            </div>
+
+            <button id="submit-order-btn" class="submit-order-btn buy" type="button">
+              Buy BTC
+            </button>
+          </div>
+
+          <!-- Right: Live Order Book & Recent Trades -->
+          <div class="orderbook-col">
+            <div class="ob-head-tabs">
+              <button class="ob-tab active" data-obtab="book">Order Book</button>
+              <button class="ob-tab" data-obtab="trades">Trades</button>
+            </div>
+
+            <div id="ob-book-pane" class="ob-pane active">
+              <div class="ob-col-labels">
+                <span>Price</span>
+                <span>Amount</span>
+              </div>
+              <div id="ob-asks" class="ob-rows asks"></div>
+              <div id="ob-mid" class="ob-mid-price tabular">$91,420.00</div>
+              <div id="ob-bids" class="ob-rows bids"></div>
+            </div>
+
+            <div id="ob-trades-pane" class="ob-pane">
+              <div class="ob-col-labels">
+                <span>Price</span>
+                <span>Qty</span>
+                <span>Time</span>
+              </div>
+              <div id="recent-trades-list" class="recent-trades-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Orders / Positions Tabs -->
+        <div class="trade-bottom-panel">
+          <div class="subtabs-row">
+            <button class="subtab-btn active" data-subtab="open">Open Orders (<span id="open-orders-count">0</span>)</button>
+            <button class="subtab-btn" data-subtab="holding">Position</button>
+            <button class="subtab-btn" data-subtab="history">History</button>
+          </div>
+          <div id="trade-subtab-content" class="trade-subtab-content"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 3: PORTFOLIO / ASSETS -->
+      <section id="view-assets" class="view" aria-label="Portfolio">
+        <div class="assets-hero-card">
+          <div class="hero-top">
+            <span class="hero-label">Total Equity (USD)</span>
+            <span id="rank-badge" class="rank-badge">Retail Trader</span>
+          </div>
+          <div id="assets-total-equity" class="hero-equity tabular">$10,000.00</div>
+          <div class="hero-pnl-row">
+            <span class="pnl-lbl">Total PnL</span>
+            <span id="assets-total-pnl" class="pnl-val tabular">+$0.00 (0.00%)</span>
+          </div>
+
+          <div class="hero-metrics-grid">
+            <div class="hm-box">
+              <span>Available Cash</span>
+              <strong id="assets-cash" class="tabular">$10,000.00</strong>
+            </div>
+            <div class="hm-box">
+              <span>Invested Value</span>
+              <strong id="assets-invested" class="tabular">$0.00</strong>
+            </div>
+            <div class="hm-box">
+              <span>Realized PnL</span>
+              <strong id="assets-realized" class="tabular">$0.00</strong>
+            </div>
+            <div class="hm-box">
+              <span>Win Rate</span>
+              <strong id="assets-winrate" class="tabular">--</strong>
+            </div>
+          </div>
+
+          <!-- Allocation Bar -->
+          <div class="alloc-wrap">
+            <div class="alloc-bar">
+              <div id="alloc-cash" class="alloc-seg cash" style="width: 100%"></div>
+              <div id="alloc-crypto" class="alloc-seg crypto" style="width: 0%"></div>
+              <div id="alloc-stock" class="alloc-seg stock" style="width: 0%"></div>
+            </div>
+            <div class="alloc-legend">
+              <span><i class="dot cash"></i>Cash <b id="leg-cash">100%</b></span>
+              <span><i class="dot crypto"></i>Crypto <b id="leg-crypto">0%</b></span>
+              <span><i class="dot stock"></i>Companies <b id="leg-stock">0%</b></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-header-row">
+          <h3>Holdings</h3>
+          <button id="liquidate-all-btn" class="text-action-btn" type="button">Sell All</button>
+        </div>
+        <div id="holdings-list" class="holdings-list"></div>
+
+        <div class="section-header-row">
+          <h3>Recent Executions</h3>
+        </div>
+        <div id="executions-list" class="executions-list"></div>
+      </section>
+
+      <!-- VIEW 4: MARKET NEWS & SIMULATOR HUB -->
+      <section id="view-sim" class="view" aria-label="Simulator Hub">
+        <div class="sim-card">
+          <div class="sim-card-head">
+            <div>
+              <h3>Market Simulation</h3>
+              <p class="muted-sub">Control market speed, trigger macro sessions, or reset capital.</p>
+            </div>
+            <span id="sim-day-counter" class="sim-day-badge tabular">Day 1</span>
+          </div>
+
+          <div class="sim-actions-grid">
+            <button id="btn-advance-hour" class="sim-action-btn" type="button">Skip +1 Hour</button>
+            <button id="btn-advance-day" class="sim-action-btn" type="button">Skip +1 Day</button>
+            <button id="btn-trigger-news" class="sim-action-btn" type="button">New Catalyst</button>
+            <button id="btn-reset-account" class="sim-action-btn danger" type="button">Reset Account</button>
+          </div>
+        </div>
+
+        <div class="section-header-row">
+          <h3>Milestones</h3>
+          <span id="ach-count" class="muted-sub tabular">0 / 7</span>
+        </div>
+        <div id="achievements-list" class="achievements-list"></div>
+
+        <div class="section-header-row">
+          <h3>Market News Feed</h3>
+        </div>
+        <div id="news-feed-list" class="news-feed-list"></div>
+      </section>
+    </main>
+
+    <!-- Bottom Tab Bar -->
+    <nav class="bottom-nav" aria-label="Main navigation">
+      <button class="nav-item active" data-view="markets">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/>
+        </svg>
+        <span>Markets</span>
+      </button>
+      <button class="nav-item" data-view="trade">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/>
+        </svg>
+        <span>Trade</span>
+      </button>
+      <button class="nav-item" data-view="assets">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <rect x="2" y="5" width="20" height="14" rx="2"/><path d="M16 12h4"/>
+        </svg>
+        <span>Assets</span>
+      </button>
+      <button class="nav-item" data-view="sim">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/>
+          <path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/>
+        </svg>
+        <span>Feed</span>
+      </button>
+    </nav>
+
+    <!-- Pair Switcher Bottom Sheet Modal -->
+    <div id="pair-modal" class="modal-backdrop" aria-hidden="true">
+      <div class="bottom-sheet">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <h4>Select Market</h4>
+          <button id="close-pair-modal" class="icon-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <div class="sheet-search">
+          <input id="sheet-search-input" type="search" placeholder="Filter symbol or company..." autocomplete="off" />
+        </div>
+        <div class="sheet-cats">
+          <button class="sheet-cat active" data-scat="all">All</button>
+          <button class="sheet-cat" data-scat="crypto">Crypto</button>
+          <button class="sheet-cat" data-scat="stock">Companies</button>
+        </div>
+        <div id="sheet-pair-list" class="sheet-pair-list"></div>
+      </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+  </div>
+
+  <script src="engine.js"></script>
+  <script src="chart.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

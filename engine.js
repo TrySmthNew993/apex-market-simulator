@@ -1,0 +1,903 @@
+(function (global) {
+  'use strict';
+
+  const STORAGE_KEY = 'apexsim_state_v1';
+  const STARTING_CASH = 10000;
+  const FEE_RATE = 0.001; // 0.1% spot fee
+
+  const TF_TICKS = {
+    '1m': 6,
+    '5m': 24,
+    '15m': 72,
+    '1h': 200,
+    '1D': 600
+  };
+
+  const ASSET_DEFS = [
+    // Crypto
+    { id: 'BTC', symbol: 'BTC', quote: 'USDT', name: 'Bitcoin', kind: 'crypto', sector: 'Layer 1', basePrice: 91420.0, priceDecimals: 2, qtyDecimals: 5, volatility: 0.0032, beta: 1.0, avgVol: 2840000000 },
+    { id: 'ETH', symbol: 'ETH', quote: 'USDT', name: 'Ethereum', kind: 'crypto', sector: 'Layer 1', basePrice: 3180.0, priceDecimals: 2, qtyDecimals: 4, volatility: 0.0038, beta: 1.12, avgVol: 1420000000 },
+    { id: 'SOL', symbol: 'SOL', quote: 'USDT', name: 'Solana', kind: 'crypto', sector: 'Layer 1', basePrice: 214.5, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0052, beta: 1.35, avgVol: 790000000 },
+    { id: 'BNB', symbol: 'BNB', quote: 'USDT', name: 'BNB', kind: 'crypto', sector: 'Exchange', basePrice: 628.4, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0030, beta: 0.85, avgVol: 410000000 },
+    { id: 'XRP', symbol: 'XRP', quote: 'USDT', name: 'Ripple', kind: 'crypto', sector: 'Payments', basePrice: 1.084, priceDecimals: 4, qtyDecimals: 1, volatility: 0.0048, beta: 0.95, avgVol: 620000000 },
+    { id: 'DOGE', symbol: 'DOGE', quote: 'USDT', name: 'Dogecoin', kind: 'crypto', sector: 'Meme', basePrice: 0.368, priceDecimals: 4, qtyDecimals: 0, volatility: 0.0064, beta: 1.30, avgVol: 540000000 },
+    { id: 'AVAX', symbol: 'AVAX', quote: 'USDT', name: 'Avalanche', kind: 'crypto', sector: 'Layer 1', basePrice: 35.6, priceDecimals: 2, qtyDecimals: 2, volatility: 0.0050, beta: 1.25, avgVol: 215000000 },
+    { id: 'TON', symbol: 'TON', quote: 'USDT', name: 'Toncoin', kind: 'crypto', sector: 'Layer 1', basePrice: 5.42, priceDecimals: 3, qtyDecimals: 1, volatility: 0.0044, beta: 0.90, avgVol: 185000000 },
+
+    // Companies / Equities
+    { id: 'NVDA', symbol: 'NVDA', quote: 'USD', name: 'NVIDIA Corp.', kind: 'stock', sector: 'Semis', basePrice: 142.8, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0028, beta: 1.35, avgVol: 3920000000 },
+    { id: 'AAPL', symbol: 'AAPL', quote: 'USD', name: 'Apple Inc.', kind: 'stock', sector: 'Consumer Tech', basePrice: 228.5, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0016, beta: 0.90, avgVol: 1850000000 },
+    { id: 'MSFT', symbol: 'MSFT', quote: 'USD', name: 'Microsoft Corp.', kind: 'stock', sector: 'Cloud & AI', basePrice: 418.2, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0017, beta: 0.95, avgVol: 1410000000 },
+    { id: 'TSLA', symbol: 'TSLA', quote: 'USD', name: 'Tesla Inc.', kind: 'stock', sector: 'EV & Auto', basePrice: 324.6, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0038, beta: 1.45, avgVol: 2680000000 },
+    { id: 'AMZN', symbol: 'AMZN', quote: 'USD', name: 'Amazon.com', kind: 'stock', sector: 'E-Commerce', basePrice: 206.4, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0021, beta: 1.05, avgVol: 1320000000 },
+    { id: 'GOOGL', symbol: 'GOOGL', quote: 'USD', name: 'Alphabet Inc.', kind: 'stock', sector: 'Search & AI', basePrice: 176.9, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0020, beta: 1.00, avgVol: 1050000000 },
+    { id: 'META', symbol: 'META', quote: 'USD', name: 'Meta Platforms', kind: 'stock', sector: 'Social & AI', basePrice: 574.3, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0025, beta: 1.15, avgVol: 1180000000 },
+    { id: 'JPM', symbol: 'JPM', quote: 'USD', name: 'JPMorgan Chase', kind: 'stock', sector: 'Financials', basePrice: 241.1, priceDecimals: 2, qtyDecimals: 3, volatility: 0.0014, beta: 0.72, avgVol: 780000000 }
+  ];
+
+  const NEWS_TEMPLATES = [
+    { scope: 'crypto', impact: 1, title: 'Spot Crypto ETF Net Inflows Surge', desc: 'Institutional desks add Spot BTC & ETH exposure across major liquidity venues.' },
+    { scope: 'crypto', impact: -1, title: 'Large Exchange Inflows Spark Caution', desc: 'On-chain trackers report elevated whale deposits ahead of options expiry.' },
+    { scope: 'stock', impact: 1, title: 'US Macro Print Comes In Cooler Than Consensus', desc: 'Treasury yields ease, supporting broad upside across technology and growth equities.' },
+    { scope: 'stock', impact: -1, title: 'Hawkish Central Bank Commentary Weighs on Equities', desc: 'Rate-sensitive tech multiples pull back as bond yields tick higher.' },
+    { scope: 'all', impact: 1, title: 'Global Risk Appetite Strengthens in Asia & US Open', desc: 'Both digital assets and mega-cap equities catch steady bid depth.' },
+    { scope: 'all', impact: -1, title: 'Broad De-Risking Ahead of Macro Data Release', desc: 'Traders trim leverage and widen spreads across crypto and stock books.' },
+    { scope: 'BTC', impact: 1, title: 'Bitcoin Sovereign Reserve Proposal Advances', desc: 'Spot order books thin on the ask side as momentum buyers step in.' },
+    { scope: 'ETH', impact: 1, title: 'Ethereum L2 Throughput Hits New Weekly High', desc: 'Network fee burn accelerates alongside rising staking inflows.' },
+    { scope: 'SOL', impact: 1, title: 'Solana DEX Volume Leads Layer-1 Peers', desc: 'High-frequency market makers deepen SOL/USDT liquidity.' },
+    { scope: 'DOGE', impact: -1, title: 'Meme Sector Rotates Lower After Sharp Run', desc: 'Short-term momentum traders lock in gains on high-beta tokens.' },
+    { scope: 'NVDA', impact: 1, title: 'NVIDIA Expands Next-Gen Datacenter Shipments', desc: 'Hyperscaler capex forecasts push semiconductor demand estimates higher.' },
+    { scope: 'NVDA', impact: -1, title: 'Export Licensing Review Pressures Chipmakers', desc: 'Semiconductor names see profit-taking on supply-chain headlines.' },
+    { scope: 'AAPL', impact: 1, title: 'Apple Services Revenue Tops Street Estimates', desc: 'Steady margin expansion bolsters institutional accumulation.' },
+    { scope: 'TSLA', impact: 1, title: 'Tesla Quarterly Delivery Beat Lifts EV Sector', desc: 'Higher factory utilization eases near-term margin concerns.' },
+    { scope: 'TSLA', impact: -1, title: 'Tesla Price Cuts Trigger Margin Debate', desc: 'Analysts revise near-term automotive gross margin models lower.' },
+    { scope: 'MSFT', impact: 1, title: 'Microsoft Cloud Backlog Accelerates 24% YoY', desc: 'Enterprise AI seat adoption drives recurring contract growth.' },
+    { scope: 'META', impact: 1, title: 'Meta Ad Impressions and Pricing Rise Together', desc: 'Efficiency gains keep operating margins near multi-year highs.' },
+    { scope: 'JPM', impact: 1, title: 'JPMorgan Net Interest Income Guidance Raised', desc: 'Large-cap financials outperform on resilient credit quality.' }
+  ];
+
+  const ACHIEVEMENTS = [
+    { id: 'first_trade', title: 'First Execution', desc: 'Complete your first Buy or Sell order.' },
+    { id: 'first_profit', title: 'In The Green', desc: 'Close a position with a realized profit.' },
+    { id: 'diversified', title: 'Cross-Asset Desk', desc: 'Hold at least 1 Crypto and 1 Company stock simultaneously.' },
+    { id: 'limit_fill', title: 'Limit Sniper', desc: 'Have a Limit order execute automatically.' },
+    { id: 'ten_trades', title: 'Active Tape Reader', desc: 'Execute 10 or more trades.' },
+    { id: 'eq_12500', title: 'Portfolio Builder', desc: 'Reach $12,500.00 in total account equity.' },
+    { id: 'eq_25000', title: 'Institutional Size', desc: 'Reach $25,000.00 in total account equity.' }
+  ];
+
+  function randNormal() {
+    // Box-Muller transform
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+  }
+
+  function roundTo(val, decimals) {
+    const f = Math.pow(10, decimals);
+    return Math.round(val * f) / f;
+  }
+
+  function clamp(val, min, max) {
+    return Math.max(min, Math.min(max, val));
+  }
+
+  function formatPrice(val, decimals) {
+    if (val === undefined || val === null || isNaN(val)) return '--';
+    return Number(val).toLocaleString('en-US', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+  }
+
+  function formatUsd(val) {
+    const sign = val < 0 ? '-' : '';
+    const abs = Math.abs(val);
+    return sign + '$' + abs.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+  }
+
+  function formatCompactUsd(val) {
+    if (val >= 1e12) return '$' + (val / 1e12).toFixed(2) + 'T';
+    if (val >= 1e9) return '$' + (val / 1e9).toFixed(2) + 'B';
+    if (val >= 1e6) return '$' + (val / 1e6).toFixed(1) + 'M';
+    if (val >= 1e3) return '$' + (val / 1e3).toFixed(1) + 'K';
+    return '$' + val.toFixed(0);
+  }
+
+  function formatQty(val, decimals) {
+    if (val === undefined || val === null || isNaN(val)) return '0';
+    return Number(val).toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: decimals
+    });
+  }
+
+  function generateHistoryForAsset(def) {
+    const candles = {};
+    const tfs = Object.keys(TF_TICKS);
+    const now = Date.now();
+
+    tfs.forEach((tf) => {
+      const count = 88;
+      const stepScale = Math.sqrt(TF_TICKS[tf]);
+      const stepVol = def.volatility * stepScale * 0.75;
+      const list = [];
+
+      // Walk backwards from basePrice to ensure final close matches initial live price cleanly
+      let p = def.basePrice;
+      const closes = [p];
+      for (let i = 1; i < count; i++) {
+        const ret = randNormal() * stepVol;
+        p = p / Math.exp(ret);
+        closes.unshift(p);
+      }
+
+      const barMs = TF_TICKS[tf] * 10000;
+      for (let i = 0; i < count; i++) {
+        const open = i === 0 ? closes[0] * (1 + randNormal() * stepVol * 0.3) : closes[i - 1];
+        const close = closes[i];
+        const bodyMax = Math.max(open, close);
+        const bodyMin = Math.min(open, close);
+        const wickUp = Math.abs(randNormal()) * stepVol * close * 0.65;
+        const wickDn = Math.abs(randNormal()) * stepVol * close * 0.65;
+        const high = roundTo(bodyMax + wickUp, def.priceDecimals);
+        const low = roundTo(Math.max(0.0001, bodyMin - wickDn), def.priceDecimals);
+        const volBase = (def.avgVol / 1440) * TF_TICKS[tf] * (0.55 + Math.random() * 0.95);
+
+        list.push({
+          t: now - (count - 1 - i) * barMs,
+          o: roundTo(open, def.priceDecimals),
+          h: high,
+          l: low,
+          c: roundTo(close, def.priceDecimals),
+          v: Math.round(volBase)
+        });
+      }
+      candles[tf] = list;
+    });
+
+    return candles;
+  }
+
+  class MarketEngine {
+    constructor() {
+      this.listeners = new Set();
+      this.timer = null;
+      this.speed = 1; // 0 = paused, 1, 2, 5
+      this.state = null;
+      this.initOrLoad();
+    }
+
+    initOrLoad() {
+      let loaded = null;
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) loaded = JSON.parse(raw);
+      } catch (e) {
+        loaded = null;
+      }
+
+      if (loaded && loaded.assets && loaded.cash !== undefined) {
+        this.state = loaded;
+        // Ensure any newly added fields exist
+        this.state.achievements = this.state.achievements || {};
+        this.state.newsFeed = this.state.newsFeed || [];
+        this.state.catalysts = this.state.catalysts || [];
+        this.state.watchlist = this.state.watchlist || ['BTC', 'ETH', 'NVDA', 'AAPL'];
+        this.state.stats = this.state.stats || {
+          totalTrades: 0,
+          closingTrades: 0,
+          winningTrades: 0,
+          realizedPnl: 0
+        };
+      } else {
+        this.createFreshState();
+      }
+    }
+
+    createFreshState() {
+      const assets = {};
+      ASSET_DEFS.forEach((def) => {
+        const candles = generateHistoryForAsset(def);
+        const bars1m = candles['1m'];
+        const ref24 = bars1m[Math.max(0, bars1m.length - 48)].o;
+        let hi = def.basePrice;
+        let lo = def.basePrice;
+        bars1m.slice(-48).forEach((b) => {
+          if (b.h > hi) hi = b.h;
+          if (b.l < lo) lo = b.l;
+        });
+
+        const recentTrades = [];
+        const baseTs = Date.now();
+        for (let i = 0; i < 12; i++) {
+          const isBuy = Math.random() > 0.48;
+          const jitter = (Math.random() - 0.5) * def.volatility * def.basePrice;
+          recentTrades.push({
+            price: roundTo(def.basePrice + jitter, def.priceDecimals),
+            qty: this.randomTradeQty(def),
+            side: isBuy ? 'buy' : 'sell',
+            time: baseTs - i * 4000
+          });
+        }
+
+        assets[def.id] = {
+          ...def,
+          price: def.basePrice,
+          prevPrice: def.basePrice,
+          open24h: ref24,
+          high24h: hi,
+          low24h: lo,
+          vol24h: def.avgVol,
+          candles,
+          recentTrades
+        };
+      });
+
+      this.state = {
+        cash: STARTING_CASH,
+        holdings: {},
+        openOrders: [],
+        tradeHistory: [],
+        watchlist: ['BTC', 'ETH', 'NVDA', 'AAPL'],
+        tickCount: 0,
+        regime: 'NEUTRAL', // BULL | BEAR | NEUTRAL
+        sentiment: 54,
+        catalysts: [],
+        newsFeed: [
+          {
+            id: 'init-1',
+            time: Date.now(),
+            scope: 'MARKET',
+            impact: 0,
+            title: 'Trading Desk Initialized — $10,000.00 Capital Ready',
+            desc: 'Spot markets open across 8 Crypto pairs and 8 US Company equities with 0.1% fees.'
+          }
+        ],
+        achievements: {},
+        stats: {
+          totalTrades: 0,
+          closingTrades: 0,
+          winningTrades: 0,
+          realizedPnl: 0
+        },
+        assets
+      };
+
+      this.saveState();
+    }
+
+    randomTradeQty(def) {
+      const targetUsd = 150 + Math.random() * 4500;
+      const raw = targetUsd / def.basePrice;
+      return roundTo(Math.max(Math.pow(10, -def.qtyDecimals), raw), def.qtyDecimals);
+    }
+
+    saveState() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      } catch (e) {
+        // Ignore storage quota issues gracefully
+      }
+    }
+
+    subscribe(fn) {
+      this.listeners.add(fn);
+      return () => this.listeners.delete(fn);
+    }
+
+    emit(eventType, payload) {
+      this.listeners.forEach((fn) => fn(eventType, payload));
+    }
+
+    setSpeed(speed) {
+      this.speed = speed;
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+      if (speed > 0) {
+        const intervalMs = speed === 1 ? 950 : speed === 2 ? 480 : 210;
+        this.timer = setInterval(() => this.stepTick(true), intervalMs);
+      }
+      this.emit('speed', speed);
+    }
+
+    start() {
+      this.setSpeed(this.speed);
+    }
+
+    getAssetsList() {
+      return ASSET_DEFS.map((d) => this.state.assets[d.id]);
+    }
+
+    getAsset(id) {
+      return this.state.assets[id];
+    }
+
+    getReservedCash() {
+      return this.state.openOrders
+        .filter((o) => o.side === 'buy')
+        .reduce((sum, o) => sum + o.reservedUsd, 0);
+    }
+
+    getAvailableCash() {
+      return Math.max(0, this.state.cash - this.getReservedCash());
+    }
+
+    getReservedQty(assetId) {
+      return this.state.openOrders
+        .filter((o) => o.side === 'sell' && o.assetId === assetId)
+        .reduce((sum, o) => sum + o.qty, 0);
+    }
+
+    getAvailableQty(assetId) {
+      const h = this.state.holdings[assetId];
+      const total = h ? h.qty : 0;
+      return Math.max(0, total - this.getReservedQty(assetId));
+    }
+
+    getPortfolioSummary() {
+      let cryptoVal = 0;
+      let stockVal = 0;
+      let unrealizedPnl = 0;
+      const holdingRows = [];
+
+      Object.keys(this.state.holdings).forEach((id) => {
+        const h = this.state.holdings[id];
+        if (!h || h.qty <= 1e-9) return;
+        const asset = this.state.assets[id];
+        if (!asset) return;
+        const marketVal = h.qty * asset.price;
+        const costBasis = h.qty * h.avgPrice;
+        const pnl = marketVal - costBasis;
+        const pnlPct = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+
+        if (asset.kind === 'crypto') cryptoVal += marketVal;
+        else stockVal += marketVal;
+
+        unrealizedPnl += pnl;
+        holdingRows.push({
+          assetId: id,
+          symbol: asset.symbol,
+          quote: asset.quote,
+          name: asset.name,
+          kind: asset.kind,
+          qty: h.qty,
+          avgPrice: h.avgPrice,
+          currentPrice: asset.price,
+          marketVal,
+          pnl,
+          pnlPct
+        });
+      });
+
+      const invested = cryptoVal + stockVal;
+      const equity = this.state.cash + invested;
+      const totalPnl = equity - STARTING_CASH;
+      const totalPnlPct = (totalPnl / STARTING_CASH) * 100;
+
+      return {
+        cash: this.state.cash,
+        availableCash: this.getAvailableCash(),
+        cryptoVal,
+        stockVal,
+        invested,
+        equity,
+        unrealizedPnl,
+        totalPnl,
+        totalPnlPct,
+        holdingRows
+      };
+    }
+
+    getRank(equity) {
+      if (equity >= 50000) return 'Quant Partner';
+      if (equity >= 25000) return 'Portfolio Manager';
+      if (equity >= 16000) return 'Desk Strategist';
+      if (equity >= 12000) return 'Swing Trader';
+      if (equity >= 10300) return 'Active Trader';
+      return 'Retail Trader';
+    }
+
+    stepTick(shouldEmit = true) {
+      this.state.tickCount += 1;
+      const tick = this.state.tickCount;
+
+      // Occasional regime shift
+      if (tick % 90 === 0) {
+        const r = Math.random();
+        if (r < 0.36) this.state.regime = 'BULL';
+        else if (r < 0.68) this.state.regime = 'NEUTRAL';
+        else this.state.regime = 'BEAR';
+      }
+
+      // Periodic catalyst event
+      if (tick % 42 === 0 && Math.random() < 0.65) {
+        this.triggerCatalyst(false);
+      }
+
+      // Decay active catalysts
+      this.state.catalysts = this.state.catalysts.filter((c) => c.ttl > 0);
+      this.state.catalysts.forEach((c) => {
+        c.ttl -= 1;
+      });
+
+      const regimeDrift = this.state.regime === 'BULL' ? 0.00018 : this.state.regime === 'BEAR' ? -0.00016 : 0;
+      const cryptoMacro = randNormal() * 0.0014 + regimeDrift;
+      const stockMacro = randNormal() * 0.0009 + regimeDrift * 0.8;
+
+      const now = Date.now();
+      let avgCryptoChg = 0;
+      let avgStockChg = 0;
+      let cryptoCount = 0;
+      let stockCount = 0;
+
+      ASSET_DEFS.forEach((def) => {
+        const a = this.state.assets[def.id];
+        a.prevPrice = a.price;
+
+        const macro = a.kind === 'crypto' ? cryptoMacro : stockMacro;
+        let catalystDrift = 0;
+        this.state.catalysts.forEach((c) => {
+          if (c.scope === 'all' || c.scope === a.kind || c.scope === a.id) {
+            catalystDrift += c.impact * 0.00075;
+          }
+        });
+
+        // Subtle mean-reversion toward basePrice so prices stay grounded over long sessions
+        const relDist = (a.price - a.basePrice) / a.basePrice;
+        const meanRev = -relDist * 0.00035;
+
+        const idio = randNormal() * a.volatility;
+        const ret = macro * a.beta + idio + catalystDrift + meanRev;
+        const nextPriceRaw = Math.max(Math.pow(10, -a.priceDecimals), a.price * Math.exp(ret));
+        const nextPrice = roundTo(nextPriceRaw, a.priceDecimals);
+
+        a.price = nextPrice;
+        if (nextPrice > a.high24h) a.high24h = nextPrice;
+        if (nextPrice < a.low24h) a.low24h = nextPrice;
+
+        const tickVol = Math.round((a.avgVol / 1440) * (0.4 + Math.abs(ret) * 240));
+        a.vol24h = Math.round(a.vol24h * 0.996 + tickVol);
+
+        // Update candles across all timeframes
+        Object.keys(TF_TICKS).forEach((tf) => {
+          const bars = a.candles[tf];
+          const period = TF_TICKS[tf];
+          const last = bars[bars.length - 1];
+
+          if (tick % period === 0) {
+            bars.push({
+              t: now,
+              o: nextPrice,
+              h: nextPrice,
+              l: nextPrice,
+              c: nextPrice,
+              v: tickVol
+            });
+            if (bars.length > 96) bars.shift();
+          } else if (last) {
+            last.c = nextPrice;
+            if (nextPrice > last.h) last.h = nextPrice;
+            if (nextPrice < last.l) last.l = nextPrice;
+            last.v += tickVol;
+          }
+        });
+
+        // Update 24h reference softly using 1m candles
+        const bars1m = a.candles['1m'];
+        if (bars1m.length >= 48) {
+          a.open24h = bars1m[bars1m.length - 48].o;
+        }
+
+        // Add live print to recentTrades
+        a.recentTrades.unshift({
+          price: nextPrice,
+          qty: this.randomTradeQty(a),
+          side: nextPrice >= a.prevPrice ? 'buy' : 'sell',
+          time: now
+        });
+        if (a.recentTrades.length > 14) a.recentTrades.pop();
+
+        const chg = ((a.price - a.open24h) / a.open24h) * 100;
+        if (a.kind === 'crypto') {
+          avgCryptoChg += chg;
+          cryptoCount++;
+        } else {
+          avgStockChg += chg;
+          stockCount++;
+        }
+      });
+
+      const netChg = (avgCryptoChg / cryptoCount + avgStockChg / stockCount) / 2;
+      this.state.sentiment = Math.round(clamp(50 + netChg * 4.5 + (this.state.regime === 'BULL' ? 8 : this.state.regime === 'BEAR' ? -8 : 0), 12, 88));
+
+      // Check limit orders
+      this.processOpenOrders();
+      this.evaluateAchievements();
+
+      if (tick % 6 === 0) {
+        this.saveState();
+      }
+
+      if (shouldEmit) {
+        this.emit('tick', { tick });
+      }
+    }
+
+    advanceTicks(count, label) {
+      for (let i = 0; i < count; i++) {
+        this.stepTick(false);
+      }
+      this.saveState();
+      this.emit('tick', { tick: this.state.tickCount });
+      if (label) {
+        this.emit('toast', { type: 'info', message: `Simulated ${label} forward.` });
+      }
+    }
+
+    triggerCatalyst(notify = true) {
+      const tpl = NEWS_TEMPLATES[Math.floor(Math.random() * NEWS_TEMPLATES.length)];
+      this.state.catalysts.push({
+        scope: tpl.scope,
+        impact: tpl.impact,
+        ttl: 14
+      });
+
+      const entry = {
+        id: 'n-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+        time: Date.now(),
+        scope: tpl.scope === 'all' ? 'MACRO' : tpl.scope.toUpperCase(),
+        impact: tpl.impact,
+        title: tpl.title,
+        desc: tpl.desc
+      };
+
+      this.state.newsFeed.unshift(entry);
+      if (this.state.newsFeed.length > 30) this.state.newsFeed.pop();
+      this.saveState();
+      this.emit('news', entry);
+      if (notify) {
+        this.emit('toast', { type: 'info', message: entry.title });
+      }
+    }
+
+    generateOrderBook(assetId) {
+      const a = this.state.assets[assetId];
+      if (!a) return { asks: [], bids: [] };
+
+      const p = a.price;
+      const spreadStep = Math.max(Math.pow(10, -a.priceDecimals), p * 0.00045);
+      const asks = [];
+      const bids = [];
+
+      let maxQty = 0;
+      for (let i = 1; i <= 6; i++) {
+        const askP = roundTo(p + spreadStep * i, a.priceDecimals);
+        const bidP = roundTo(Math.max(Math.pow(10, -a.priceDecimals), p - spreadStep * i), a.priceDecimals);
+        const baseNotional = 1200 + i * 950;
+        const askQ = roundTo((baseNotional * (0.6 + Math.random() * 0.9)) / p, a.qtyDecimals);
+        const bidQ = roundTo((baseNotional * (0.6 + Math.random() * 0.9)) / p, a.qtyDecimals);
+        maxQty = Math.max(maxQty, askQ, bidQ);
+        asks.push({ price: askP, qty: askQ });
+        bids.push({ price: bidP, qty: bidQ });
+      }
+
+      // Asks sorted descending so lowest ask is closest to mid
+      asks.sort((x, y) => y.price - x.price);
+      bids.sort((x, y) => y.price - x.price);
+
+      asks.forEach((r) => { r.depthPct = Math.min(100, Math.round((r.qty / maxQty) * 100)); });
+      bids.forEach((r) => { r.depthPct = Math.min(100, Math.round((r.qty / maxQty) * 100)); });
+
+      return { asks, bids };
+    }
+
+    placeOrder({ assetId, side, type, price, qty }) {
+      const a = this.state.assets[assetId];
+      if (!a) return { ok: false, error: 'Asset not found.' };
+
+      const cleanQty = roundTo(Number(qty), a.qtyDecimals);
+      if (!cleanQty || cleanQty <= 0) {
+        return { ok: false, error: 'Enter a valid quantity.' };
+      }
+
+      if (type === 'market') {
+        return this.executeFill({
+          assetId,
+          side,
+          price: a.price,
+          qty: cleanQty,
+          orderType: 'Market'
+        });
+      }
+
+      // Limit order
+      const cleanPrice = roundTo(Number(price), a.priceDecimals);
+      if (!cleanPrice || cleanPrice <= 0) {
+        return { ok: false, error: 'Enter a valid limit price.' };
+      }
+
+      // Immediate fill if limit crosses current market price
+      if ((side === 'buy' && cleanPrice >= a.price) || (side === 'sell' && cleanPrice <= a.price)) {
+        return this.executeFill({
+          assetId,
+          side,
+          price: a.price,
+          qty: cleanQty,
+          orderType: 'Limit'
+        });
+      }
+
+      if (side === 'buy') {
+        const needed = cleanPrice * cleanQty * (1 + FEE_RATE);
+        if (needed > this.getAvailableCash() + 0.01) {
+          return { ok: false, error: 'Insufficient available USD balance.' };
+        }
+        this.state.openOrders.unshift({
+          id: 'ord-' + Date.now() + '-' + Math.floor(Math.random() * 999),
+          assetId,
+          side: 'buy',
+          type: 'limit',
+          price: cleanPrice,
+          qty: cleanQty,
+          reservedUsd: needed,
+          createdAt: Date.now()
+        });
+      } else {
+        const availQty = this.getAvailableQty(assetId);
+        if (cleanQty > availQty + 1e-8) {
+          return { ok: false, error: `Insufficient ${a.symbol} balance.` };
+        }
+        this.state.openOrders.unshift({
+          id: 'ord-' + Date.now() + '-' + Math.floor(Math.random() * 999),
+          assetId,
+          side: 'sell',
+          type: 'limit',
+          price: cleanPrice,
+          qty: cleanQty,
+          reservedUsd: 0,
+          createdAt: Date.now()
+        });
+      }
+
+      this.saveState();
+      this.emit('portfolio', {});
+      return { ok: true, status: 'open', message: `Limit ${side.toUpperCase()} placed @ ${formatPrice(cleanPrice, a.priceDecimals)}` };
+    }
+
+    executeFill({ assetId, side, price, qty, orderType, fromLimit = false }) {
+      const a = this.state.assets[assetId];
+      const notional = price * qty;
+      const fee = notional * FEE_RATE;
+
+      if (side === 'buy') {
+        const totalCost = notional + fee;
+        const availCash = fromLimit ? this.state.cash : this.getAvailableCash();
+        if (totalCost > availCash + 0.02) {
+          return { ok: false, error: 'Insufficient available USD balance.' };
+        }
+
+        const actualCost = Math.min(this.state.cash, totalCost);
+        this.state.cash = Math.max(0, this.state.cash - actualCost);
+
+        const prev = this.state.holdings[assetId];
+        if (prev && prev.qty > 0) {
+          const newQty = prev.qty + qty;
+          const newAvg = (prev.qty * prev.avgPrice + notional) / newQty;
+          this.state.holdings[assetId] = { qty: newQty, avgPrice: newAvg };
+        } else {
+          this.state.holdings[assetId] = { qty, avgPrice: price };
+        }
+
+        this.state.stats.totalTrades += 1;
+        this.state.tradeHistory.unshift({
+          id: 'tr-' + Date.now() + '-' + Math.floor(Math.random() * 999),
+          assetId,
+          symbol: a.symbol,
+          quote: a.quote,
+          side: 'buy',
+          orderType,
+          price,
+          qty,
+          fee,
+          realizedPnl: null,
+          time: Date.now()
+        });
+      } else {
+        const holding = this.state.holdings[assetId];
+        const availQty = fromLimit ? (holding ? holding.qty : 0) : this.getAvailableQty(assetId);
+        if (!holding || qty > availQty + 1e-8) {
+          return { ok: false, error: `Insufficient ${a.symbol} balance.` };
+        }
+
+        const sellQty = Math.min(holding.qty, qty);
+        const proceeds = price * sellQty - fee;
+        const realized = (price - holding.avgPrice) * sellQty - fee;
+
+        this.state.cash += proceeds;
+        const remQty = holding.qty - sellQty;
+        if (remQty <= Math.pow(10, -(a.qtyDecimals + 2))) {
+          delete this.state.holdings[assetId];
+        } else {
+          holding.qty = remQty;
+        }
+
+        this.state.stats.totalTrades += 1;
+        this.state.stats.closingTrades += 1;
+        this.state.stats.realizedPnl += realized;
+        if (realized > 0) {
+          this.state.stats.winningTrades += 1;
+          this.unlockAchievement('first_profit');
+        }
+
+        this.state.tradeHistory.unshift({
+          id: 'tr-' + Date.now() + '-' + Math.floor(Math.random() * 999),
+          assetId,
+          symbol: a.symbol,
+          quote: a.quote,
+          side: 'sell',
+          orderType,
+          price,
+          qty: sellQty,
+          fee,
+          realizedPnl: realized,
+          time: Date.now()
+        });
+      }
+
+      if (this.state.tradeHistory.length > 60) {
+        this.state.tradeHistory.pop();
+      }
+
+      a.recentTrades.unshift({
+        price,
+        qty,
+        side,
+        time: Date.now()
+      });
+      if (a.recentTrades.length > 14) a.recentTrades.pop();
+
+      this.unlockAchievement('first_trade');
+      if (fromLimit) this.unlockAchievement('limit_fill');
+      this.evaluateAchievements();
+      this.saveState();
+      this.emit('portfolio', {});
+
+      return {
+        ok: true,
+        status: 'filled',
+        message: `${side === 'buy' ? 'Bought' : 'Sold'} ${formatQty(qty, a.qtyDecimals)} ${a.symbol} @ ${formatPrice(price, a.priceDecimals)}`
+      };
+    }
+
+    processOpenOrders() {
+      if (!this.state.openOrders.length) return;
+      const remaining = [];
+      let changed = false;
+
+      // Process oldest first
+      const orders = [...this.state.openOrders].reverse();
+      orders.forEach((ord) => {
+        const a = this.state.assets[ord.assetId];
+        if (!a) return;
+
+        const triggered =
+          (ord.side === 'buy' && a.price <= ord.price) ||
+          (ord.side === 'sell' && a.price >= ord.price);
+
+        if (triggered) {
+          const res = this.executeFill({
+            assetId: ord.assetId,
+            side: ord.side,
+            price: ord.price,
+            qty: ord.qty,
+            orderType: 'Limit',
+            fromLimit: true
+          });
+          changed = true;
+          if (res.ok) {
+            this.emit('toast', { type: 'success', message: `Limit Filled: ${res.message}` });
+          }
+        } else {
+          remaining.unshift(ord);
+        }
+      });
+
+      if (changed) {
+        this.state.openOrders = remaining;
+        this.saveState();
+        this.emit('portfolio', {});
+      }
+    }
+
+    cancelOrder(orderId) {
+      const idx = this.state.openOrders.findIndex((o) => o.id === orderId);
+      if (idx === -1) return;
+      this.state.openOrders.splice(idx, 1);
+      this.saveState();
+      this.emit('portfolio', {});
+      this.emit('toast', { type: 'info', message: 'Order cancelled.' });
+    }
+
+    sellAllHoldings() {
+      const ids = Object.keys(this.state.holdings);
+      if (!ids.length) return;
+      // Cancel open sell orders first so full qty is available
+      this.state.openOrders = this.state.openOrders.filter((o) => o.side !== 'sell');
+      ids.forEach((id) => {
+        const h = this.state.holdings[id];
+        const a = this.state.assets[id];
+        if (h && a && h.qty > 0) {
+          this.executeFill({
+            assetId: id,
+            side: 'sell',
+            price: a.price,
+            qty: h.qty,
+            orderType: 'Market'
+          });
+        }
+      });
+      this.emit('toast', { type: 'info', message: 'All spot positions liquidated.' });
+    }
+
+    toggleWatchlist(assetId) {
+      const idx = this.state.watchlist.indexOf(assetId);
+      if (idx >= 0) this.state.watchlist.splice(idx, 1);
+      else this.state.watchlist.push(assetId);
+      this.saveState();
+      this.emit('watchlist', assetId);
+    }
+
+    isWatched(assetId) {
+      return this.state.watchlist.includes(assetId);
+    }
+
+    unlockAchievement(id) {
+      if (!this.state.achievements[id]) {
+        this.state.achievements[id] = Date.now();
+        const meta = ACHIEVEMENTS.find((x) => x.id === id);
+        if (meta) {
+          this.emit('toast', { type: 'info', message: `Milestone: ${meta.title}` });
+        }
+      }
+    }
+
+    evaluateAchievements() {
+      const summary = this.getPortfolioSummary();
+      let hasCrypto = false;
+      let hasStock = false;
+      summary.holdingRows.forEach((r) => {
+        if (r.kind === 'crypto') hasCrypto = true;
+        if (r.kind === 'stock') hasStock = true;
+      });
+      if (hasCrypto && hasStock) this.unlockAchievement('diversified');
+      if (this.state.stats.totalTrades >= 10) this.unlockAchievement('ten_trades');
+      if (summary.equity >= 12500) this.unlockAchievement('eq_12500');
+      if (summary.equity >= 25000) this.unlockAchievement('eq_25000');
+    }
+
+    resetAccount() {
+      localStorage.removeItem(STORAGE_KEY);
+      this.createFreshState();
+      this.emit('reset', {});
+      this.emit('toast', { type: 'info', message: 'Simulator reset to $10,000.00.' });
+    }
+  }
+
+  global.ApexEngine = {
+    MarketEngine,
+    ACHIEVEMENTS,
+    FEE_RATE,
+    formatPrice,
+    formatUsd,
+    formatCompactUsd,
+    formatQty,
+    roundTo
+  };
+})(window);
