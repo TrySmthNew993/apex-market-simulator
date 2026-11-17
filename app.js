@@ -322,15 +322,44 @@
     els.ovSentimentTxt.className = 'ov-sub ' + (sent >= 65 ? 'up' : sent <= 38 ? 'down' : 'neutral');
   }
 
+  let lastMarketOrderKey = '';
+
   function renderMarkets() {
     renderMarketsOverview();
     const list = getFilteredSortedAssets();
 
     if (!list.length) {
+      lastMarketOrderKey = '';
       els.marketList.innerHTML = '<div class="empty-state">No matching Crypto or Company pairs found.</div>';
       return;
     }
 
+    const orderKey = list.map((a) => a.id).join(',');
+    if (orderKey === lastMarketOrderKey && els.marketList.children.length === list.length) {
+      for (let i = 0; i < list.length; i++) {
+        const a = list[i];
+        const row = els.marketList.children[i];
+        const chgPct = ((a.price - a.open24h) / a.open24h) * 100;
+        const isUp = chgPct >= 0;
+        const pStr = formatPrice(a.price, a.priceDecimals);
+
+        const subEl = row.querySelector('.mr-sub');
+        const priceEl = row.querySelector('.mr-price');
+        const subPriceEl = row.querySelector('.mr-subprice');
+        const chgEl = row.querySelector('.chg-pill');
+
+        if (subEl) subEl.textContent = `${a.name} · Vol ${formatCompactUsd(a.vol24h)}`;
+        if (priceEl) priceEl.textContent = pStr;
+        if (subPriceEl) subPriceEl.textContent = `$${pStr}`;
+        if (chgEl) {
+          chgEl.textContent = `${isUp ? '+' : ''}${chgPct.toFixed(2)}%`;
+          chgEl.className = `chg-pill tabular ${isUp ? 'up' : 'down'}`;
+        }
+      }
+      return;
+    }
+
+    lastMarketOrderKey = orderKey;
     const html = list.map((a) => {
       const chgPct = ((a.price - a.open24h) / a.open24h) * 100;
       const isUp = chgPct >= 0;
@@ -1067,10 +1096,9 @@
 
     // Desk Hub Actions
     els.btnSyncNow.addEventListener('click', () => {
-      engine.syncCryptoTickers();
-      engine.syncStockTickers();
-      if (ui.activeView === 'trade') syncActiveTradeData();
-      showToast('Refreshing live quotes...', 'info');
+      engine.syncCryptoTickers(false);
+      engine.syncStockTickers(false);
+      showToast('Real-world price anchors refreshed.', 'info');
     });
 
     els.btnResetAccount.addEventListener('click', () => {
@@ -1167,6 +1195,7 @@
       renderHeader();
       if (ui.activeView === 'trade') {
         renderOrderFormMeta();
+        renderOrderBook();
         renderTradeSubtab();
       } else if (ui.activeView === 'assets') {
         renderAssetsView();
@@ -1190,15 +1219,6 @@
       els.orderPrice.value = initAsset.price.toFixed(initAsset.priceDecimals);
     }
     engine.start();
-
-    // Keep real order book and live clock fresh
-    setInterval(() => {
-      if (ui.activeView === 'trade') {
-        engine.fetchRealOrderBookAndTrades(ui.selectedAssetId);
-      } else if (ui.activeView === 'sim') {
-        els.simClockBadge.textContent = new Date().toTimeString().slice(0, 8);
-      }
-    }, 4500);
   }
 
   init();
