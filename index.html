@@ -27,12 +27,9 @@
       </div>
 
       <div class="header-controls">
-        <div class="sim-speed-group" role="group" aria-label="Market mode and speed">
-          <button class="speed-btn active" data-speed="live" title="Synchronized with real live markets">LIVE</button>
-          <button class="speed-btn" data-speed="0" title="Pause simulation">II</button>
-          <button class="speed-btn" data-speed="1">1x</button>
-          <button class="speed-btn" data-speed="2">2x</button>
-          <button class="speed-btn" data-speed="5">5x</button>
+        <div id="live-status-pill" class="live-status-pill" title="Real-time market synchronization">
+          <span class="live-dot"></span>
+          <span id="live-status-text">LIVE</span>
         </div>
         <button id="header-equity-btn" class="equity-chip" title="View portfolio">
           <span class="equity-label">Eq</span>
@@ -147,6 +144,7 @@
 
           <!-- OHLC Readout Strip -->
           <div id="ohlc-strip" class="ohlc-strip tabular">
+            <span id="ohlc-time" class="ohlc-time">--:--</span>
             <span>O <b id="ohlc-o">--</b></span>
             <span>H <b id="ohlc-h">--</b></span>
             <span>L <b id="ohlc-l">--</b></span>
@@ -328,21 +326,19 @@
         <div id="executions-list" class="executions-list"></div>
       </section>
 
-      <!-- VIEW 4: MARKET NEWS & SIMULATOR HUB -->
-      <section id="view-sim" class="view" aria-label="Simulator Hub">
+      <!-- VIEW 4: MARKET NEWS & DESK HUB -->
+      <section id="view-sim" class="view" aria-label="Market Feed">
         <div class="sim-card">
           <div class="sim-card-head">
             <div>
-              <h3>Market Simulation</h3>
-              <p class="muted-sub">Control market speed, trigger macro sessions, or reset capital.</p>
+              <h3>Live Market Desk</h3>
+              <p class="muted-sub">Real-time Binance crypto &amp; US equity quotes, charts, and paper account controls.</p>
             </div>
-            <span id="sim-day-counter" class="sim-day-badge tabular">Day 1</span>
+            <span id="sim-clock-badge" class="sim-day-badge tabular">--:--:--</span>
           </div>
 
           <div class="sim-actions-grid">
-            <button id="btn-advance-hour" class="sim-action-btn" type="button">Skip +1 Hour</button>
-            <button id="btn-advance-day" class="sim-action-btn" type="button">Skip +1 Day</button>
-            <button id="btn-trigger-news" class="sim-action-btn" type="button">New Catalyst</button>
+            <button id="btn-sync-now" class="sim-action-btn" type="button">Refresh Quotes</button>
             <button id="btn-reset-account" class="sim-action-btn danger" type="button">Reset Account</button>
           </div>
         </div>

@@ -8,6 +8,7 @@
       this.onInspect = onInspect;
       this.candles = [];
       this.chartType = 'candle'; // 'candle' | 'line'
+      this.timeframe = '1m';
       this.decimals = 2;
       this.hoverIndex = null;
       this.visibleCount = 52;
@@ -69,14 +70,28 @@
       window.addEventListener('resize', () => this.draw());
     }
 
-    setData({ candles, chartType, decimals }) {
+    setData({ candles, chartType, decimals, timeframe }) {
       this.candles = candles || [];
       if (chartType) this.chartType = chartType;
       if (decimals !== undefined) this.decimals = decimals;
+      if (timeframe) this.timeframe = timeframe;
       this.draw();
       if (this.hoverIndex === null) {
         this.emitLatest();
       }
+    }
+
+    formatAxisTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      if (this.timeframe === '1D') {
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${m}/${day}`;
+      }
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      return `${hh}:${mm}`;
     }
 
     getVisibleSlice() {
@@ -281,6 +296,19 @@
       ctx.textAlign = 'left';
       ctx.fillText(this.fmt(lastBar.c), plotW + 5, lastY + 3);
 
+      // Bottom X-axis real time labels
+      ctx.font = '9.5px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillStyle = '#5B6370';
+      ctx.textAlign = 'center';
+      const labelCount = 4;
+      for (let k = 0; k < labelCount; k++) {
+        const idx = Math.min(slice.length - 1, Math.round((k + 0.5) * (slice.length / labelCount)));
+        const bar = slice[idx];
+        if (bar && bar.t) {
+          ctx.fillText(this.formatAxisTime(bar.t), xOf(idx), height - 4);
+        }
+      }
+
       // Interactive Crosshair on touch/hover
       if (this.hoverIndex !== null && slice[this.hoverIndex]) {
         const hb = slice[this.hoverIndex];
@@ -312,6 +340,18 @@
         ctx.font = '600 9.5px -apple-system, BlinkMacSystemFont, sans-serif';
         ctx.textAlign = 'left';
         ctx.fillText(this.fmt(hb.c), plotW + 5, hy + 3);
+
+        // Crosshair time pill on bottom axis
+        if (hb.t) {
+          const tStr = this.formatAxisTime(hb.t);
+          const pillW = 38;
+          const px = clampNum(hx - pillW / 2, 2, plotW - pillW - 2);
+          ctx.fillStyle = '#2B3139';
+          ctx.fillRect(px, height - 15, pillW, 13);
+          ctx.fillStyle = '#EAECEF';
+          ctx.textAlign = 'center';
+          ctx.fillText(tStr, px + pillW / 2, height - 5);
+        }
       }
 
       // Vertical separator for price axis

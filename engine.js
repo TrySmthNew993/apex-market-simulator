@@ -5,12 +5,20 @@
   const STARTING_CASH = 10000;
   const FEE_RATE = 0.001; // 0.1% spot fee
 
-  const TF_TICKS = {
-    '1m': 6,
-    '5m': 24,
-    '15m': 72,
-    '1h': 200,
-    '1D': 600
+  const TF_MS = {
+    '1m': 60 * 1000,
+    '5m': 5 * 60 * 1000,
+    '15m': 15 * 60 * 1000,
+    '1h': 60 * 60 * 1000,
+    '1D': 24 * 60 * 60 * 1000
+  };
+
+  const TF_VOL_SCALE = {
+    '1m': 1,
+    '5m': 2.2,
+    '15m': 3.8,
+    '1h': 7.5,
+    '1D': 24
   };
 
   const ASSET_DEFS = [
@@ -118,12 +126,12 @@
 
   function generateHistoryForAsset(def) {
     const candles = {};
-    const tfs = Object.keys(TF_TICKS);
+    const tfs = Object.keys(TF_MS);
     const now = Date.now();
 
     tfs.forEach((tf) => {
       const count = 88;
-      const stepScale = Math.sqrt(TF_TICKS[tf]);
+      const stepScale = TF_VOL_SCALE[tf] || 1;
       const stepVol = def.volatility * stepScale * 0.75;
       const list = [];
 
@@ -136,7 +144,8 @@
         closes.unshift(p);
       }
 
-      const barMs = TF_TICKS[tf] * 10000;
+      const barMs = TF_MS[tf];
+      const latestBucket = Math.floor(now / barMs) * barMs;
       for (let i = 0; i < count; i++) {
         const open = i === 0 ? closes[0] * (1 + randNormal() * stepVol * 0.3) : closes[i - 1];
         const close = closes[i];
@@ -146,10 +155,10 @@
         const wickDn = Math.abs(randNormal()) * stepVol * close * 0.65;
         const high = roundTo(bodyMax + wickUp, def.priceDecimals);
         const low = roundTo(Math.max(0.0001, bodyMin - wickDn), def.priceDecimals);
-        const volBase = (def.avgVol / 1440) * TF_TICKS[tf] * (0.55 + Math.random() * 0.95);
+        const volBase = (def.avgVol / 1440) * (barMs / 60000) * (0.55 + Math.random() * 0.95);
 
         list.push({
-          t: now - (count - 1 - i) * barMs,
+          t: latestBucket - (count - 1 - i) * barMs,
           o: roundTo(open, def.priceDecimals),
           h: high,
           l: low,
@@ -166,11 +175,10 @@
   class MarketEngine {
     constructor() {
       this.listeners = new Set();
-      this.timer = null;
-      this.speed = 'live'; // 'live' | 0 (paused) | 1 | 2 | 5
       this.ws = null;
       this.liveCryptoTimer = null;
       this.liveStockTimer = null;
+      this.fallbackTimer = null;
       this.lastWsEmit = 0;
       this.liveStatus = { crypto: false, stock: false };
       this.state = null;
@@ -299,38 +307,48 @@
       this.listeners.forEach((fn) => fn(eventType, payload));
     }
 
-    setSpeed(speed) {
-      this.speed = speed;
-      if (this.timer) {
-        clearInterval(this.timer);
-        this.timer = null;
-      }
-      if (speed === 'live') {
-        this.startLiveSync();
-      } else {
-        this.stopLiveSync();
-        if (speed > 0) {
-          const intervalMs = speed === 1 ? 950 : speed === 2 ? 480 : 210;
-          this.timer = setInterval(() => this.stepTick(true), intervalMs);
-        }
-      }
-      this.emit('speed', speed);
+    start() {
+      this.startLiveSync();
     }
 
-    start() {
-      this.setSpeed(this.speed);
+    updateLiveCandles(asset, price, now = Date.now()) {
+      Object.keys(TF_MS).forEach((tf) => {
+        const bars = asset.candles[tf];
+        if (!bars || !bars.length) return;
+        const barMs = TF_MS[tf];
+        const bucketTs = Math.floor(now / barMs) * barMs;
+        const last = bars[bars.length - 1];
+
+        if (last.t < bucketTs) {
+          bars.push({
+            t: bucketTs,
+            o: price,
+            h: price,
+            l: price,
+            c: price,
+            v: Math.round(asset.avgVol / 1440)
+          });
+          if (bars.length > 96) bars.shift();
+        } else {
+          last.c = price;
+          if (price > last.h) last.h = price;
+          if (price < last.l) last.l = price;
+        }
+      });
     }
 
     startLiveSync() {
       this.stopLiveSync();
-      if (typeof fetch === 'undefined') return;
+      if (typeof fetch !== 'undefined') {
+        this.syncCryptoTickers();
+        this.syncStockTickers();
+        this.connectCryptoWS();
 
-      this.syncCryptoTickers();
-      this.syncStockTickers();
-      this.connectCryptoWS();
-
-      this.liveCryptoTimer = setInterval(() => this.syncCryptoTickers(), 12000);
-      this.liveStockTimer = setInterval(() => this.syncStockTickers(), 30000);
+        this.liveCryptoTimer = setInterval(() => this.syncCryptoTickers(), 10000);
+        this.liveStockTimer = setInterval(() => this.syncStockTickers(), 25000);
+      }
+      // Fallback ticker every 4s only for assets whose live feed isn't active (e.g. offline)
+      this.fallbackTimer = setInterval(() => this.stepOfflineFallback(), 4000);
     }
 
     stopLiveSync() {
@@ -346,6 +364,10 @@
         clearInterval(this.liveStockTimer);
         this.liveStockTimer = null;
       }
+      if (this.fallbackTimer) {
+        clearInterval(this.fallbackTimer);
+        this.fallbackTimer = null;
+      }
     }
 
     connectCryptoWS() {
@@ -360,7 +382,6 @@
         this.ws = ws;
 
         ws.onmessage = (evt) => {
-          if (this.speed !== 'live') return;
           try {
             const msg = JSON.parse(evt.data);
             const d = msg && msg.data;
@@ -379,17 +400,7 @@
             a.low24h = roundTo(parseFloat(d.l), a.priceDecimals) || a.low24h;
             a.vol24h = Math.round(parseFloat(d.q) || a.vol24h);
 
-            // Update current live candle close/high/low across timeframes
-            Object.keys(TF_TICKS).forEach((tf) => {
-              const bars = a.candles[tf];
-              const last = bars && bars[bars.length - 1];
-              if (last) {
-                last.c = nextP;
-                if (nextP > last.h) last.h = nextP;
-                if (nextP < last.l) last.l = nextP;
-              }
-            });
-
+            this.updateLiveCandles(a, nextP, Date.now());
             this.liveStatus.crypto = true;
             this.processOpenOrders();
 
@@ -403,9 +414,9 @@
         };
 
         ws.onclose = () => {
-          if (this.speed === 'live' && this.ws === ws) {
+          if (this.ws === ws) {
             setTimeout(() => {
-              if (this.speed === 'live') this.connectCryptoWS();
+              this.connectCryptoWS();
             }, 4000);
           }
         };
@@ -433,15 +444,7 @@
           a.low24h = roundTo(parseFloat(item.lowPrice), a.priceDecimals);
           a.vol24h = Math.round(parseFloat(item.quoteVolume) || a.vol24h);
 
-          Object.keys(TF_TICKS).forEach((tf) => {
-            const bars = a.candles[tf];
-            const last = bars && bars[bars.length - 1];
-            if (last) {
-              last.c = a.price;
-              if (a.price > last.h) last.h = a.price;
-              if (a.price < last.l) last.l = a.price;
-            }
-          });
+          this.updateLiveCandles(a, a.price, Date.now());
         });
 
         this.liveStatus.crypto = true;
@@ -477,12 +480,7 @@
           if (meta.regularMarketDayLow) a.low24h = roundTo(meta.regularMarketDayLow, a.priceDecimals);
           if (meta.regularMarketVolume) a.vol24h = Math.round(meta.regularMarketVolume * a.price);
 
-          const last = a.candles['1m'] && a.candles['1m'][a.candles['1m'].length - 1];
-          if (last) {
-            last.c = a.price;
-            if (a.price > last.h) last.h = a.price;
-            if (a.price < last.l) last.l = a.price;
-          }
+          this.updateLiveCandles(a, a.price, Date.now());
           this.liveStatus.stock = true;
         } catch (e) {
           if (timer) clearTimeout(timer);
@@ -490,11 +488,9 @@
       });
 
       await Promise.allSettled(tasks);
-      if (this.speed === 'live') {
-        this.processOpenOrders();
-        this.saveState();
-        this.emit('tick', { live: true });
-      }
+      this.processOpenOrders();
+      this.saveState();
+      this.emit('tick', { live: true });
     }
 
     async fetchRealCandles(assetId, tf) {
@@ -687,6 +683,7 @@
       return {
         cash: this.state.cash,
         availableCash: this.getAvailableCash(),
+        reservedCash: this.getReservedCash(),
         cryptoVal,
         stockVal,
         invested,
@@ -707,140 +704,29 @@
       return 'Retail Trader';
     }
 
-    stepTick(shouldEmit = true) {
-      this.state.tickCount += 1;
-      const tick = this.state.tickCount;
-
-      // Occasional regime shift
-      if (tick % 90 === 0) {
-        const r = Math.random();
-        if (r < 0.36) this.state.regime = 'BULL';
-        else if (r < 0.68) this.state.regime = 'NEUTRAL';
-        else this.state.regime = 'BEAR';
-      }
-
-      // Periodic catalyst event
-      if (tick % 42 === 0 && Math.random() < 0.65) {
-        this.triggerCatalyst(false);
-      }
-
-      // Decay active catalysts
-      this.state.catalysts = this.state.catalysts.filter((c) => c.ttl > 0);
-      this.state.catalysts.forEach((c) => {
-        c.ttl -= 1;
-      });
-
-      const regimeDrift = this.state.regime === 'BULL' ? 0.00018 : this.state.regime === 'BEAR' ? -0.00016 : 0;
-      const cryptoMacro = randNormal() * 0.0014 + regimeDrift;
-      const stockMacro = randNormal() * 0.0009 + regimeDrift * 0.8;
-
+    stepOfflineFallback() {
       const now = Date.now();
-      let avgCryptoChg = 0;
-      let avgStockChg = 0;
-      let cryptoCount = 0;
-      let stockCount = 0;
+      let updated = false;
 
       ASSET_DEFS.forEach((def) => {
+        const isLive = def.kind === 'crypto' ? this.liveStatus.crypto : this.liveStatus.stock;
+        if (isLive) return;
+
         const a = this.state.assets[def.id];
         a.prevPrice = a.price;
-
-        const macro = a.kind === 'crypto' ? cryptoMacro : stockMacro;
-        let catalystDrift = 0;
-        this.state.catalysts.forEach((c) => {
-          if (c.scope === 'all' || c.scope === a.kind || c.scope === a.id) {
-            catalystDrift += c.impact * 0.00075;
-          }
-        });
-
-        // Subtle mean-reversion toward basePrice so prices stay grounded over long sessions
-        const relDist = (a.price - a.basePrice) / a.basePrice;
-        const meanRev = -relDist * 0.00035;
-
-        const idio = randNormal() * a.volatility;
-        const ret = macro * a.beta + idio + catalystDrift + meanRev;
-        const nextPriceRaw = Math.max(Math.pow(10, -a.priceDecimals), a.price * Math.exp(ret));
-        const nextPrice = roundTo(nextPriceRaw, a.priceDecimals);
-
+        const ret = randNormal() * a.volatility * 0.5;
+        const nextPrice = roundTo(Math.max(Math.pow(10, -a.priceDecimals), a.price * Math.exp(ret)), a.priceDecimals);
         a.price = nextPrice;
         if (nextPrice > a.high24h) a.high24h = nextPrice;
         if (nextPrice < a.low24h) a.low24h = nextPrice;
-
-        const tickVol = Math.round((a.avgVol / 1440) * (0.4 + Math.abs(ret) * 240));
-        a.vol24h = Math.round(a.vol24h * 0.996 + tickVol);
-
-        // Update candles across all timeframes
-        Object.keys(TF_TICKS).forEach((tf) => {
-          const bars = a.candles[tf];
-          const period = TF_TICKS[tf];
-          const last = bars[bars.length - 1];
-
-          if (tick % period === 0) {
-            bars.push({
-              t: now,
-              o: nextPrice,
-              h: nextPrice,
-              l: nextPrice,
-              c: nextPrice,
-              v: tickVol
-            });
-            if (bars.length > 96) bars.shift();
-          } else if (last) {
-            last.c = nextPrice;
-            if (nextPrice > last.h) last.h = nextPrice;
-            if (nextPrice < last.l) last.l = nextPrice;
-            last.v += tickVol;
-          }
-        });
-
-        // Update 24h reference softly using 1m candles
-        const bars1m = a.candles['1m'];
-        if (bars1m.length >= 48) {
-          a.open24h = bars1m[bars1m.length - 48].o;
-        }
-
-        // Add live print to recentTrades
-        a.recentTrades.unshift({
-          price: nextPrice,
-          qty: this.randomTradeQty(a),
-          side: nextPrice >= a.prevPrice ? 'buy' : 'sell',
-          time: now
-        });
-        if (a.recentTrades.length > 14) a.recentTrades.pop();
-
-        const chg = ((a.price - a.open24h) / a.open24h) * 100;
-        if (a.kind === 'crypto') {
-          avgCryptoChg += chg;
-          cryptoCount++;
-        } else {
-          avgStockChg += chg;
-          stockCount++;
-        }
+        this.updateLiveCandles(a, nextPrice, now);
+        updated = true;
       });
 
-      const netChg = (avgCryptoChg / cryptoCount + avgStockChg / stockCount) / 2;
-      this.state.sentiment = Math.round(clamp(50 + netChg * 4.5 + (this.state.regime === 'BULL' ? 8 : this.state.regime === 'BEAR' ? -8 : 0), 12, 88));
-
-      // Check limit orders
-      this.processOpenOrders();
-      this.evaluateAchievements();
-
-      if (tick % 6 === 0) {
-        this.saveState();
-      }
-
-      if (shouldEmit) {
-        this.emit('tick', { tick });
-      }
-    }
-
-    advanceTicks(count, label) {
-      for (let i = 0; i < count; i++) {
-        this.stepTick(false);
-      }
-      this.saveState();
-      this.emit('tick', { tick: this.state.tickCount });
-      if (label) {
-        this.emit('toast', { type: 'info', message: `Simulated ${label} forward.` });
+      if (updated) {
+        this.processOpenOrders();
+        this.evaluateAchievements();
+        this.emit('tick', { live: false });
       }
     }
 
@@ -874,7 +760,7 @@
       const a = this.state.assets[assetId];
       if (!a) return { asks: [], bids: [] };
 
-      if (this.speed === 'live' && a.realOrderBook && Date.now() - a.realOrderBook.ts < 15000) {
+      if (a.realOrderBook && Date.now() - a.realOrderBook.ts < 15000) {
         return a.realOrderBook;
       }
 
@@ -1019,13 +905,16 @@
       } else {
         const holding = this.state.holdings[assetId];
         const availQty = fromLimit ? (holding ? holding.qty : 0) : this.getAvailableQty(assetId);
-        if (!holding || qty > availQty + 1e-8) {
+        const dust = Math.pow(10, -a.qtyDecimals);
+        if (!holding || availQty <= 0 || qty > availQty + dust) {
           return { ok: false, error: `Insufficient ${a.symbol} balance.` };
         }
 
-        const sellQty = Math.min(holding.qty, qty);
-        const proceeds = price * sellQty - fee;
-        const realized = (price - holding.avgPrice) * sellQty - fee;
+        const sellQty = Math.min(availQty, qty);
+        const sellNotional = price * sellQty;
+        const sellFee = sellNotional * FEE_RATE;
+        const proceeds = sellNotional - sellFee;
+        const realized = (price - holding.avgPrice) * sellQty - sellFee;
 
         this.state.cash += proceeds;
         const remQty = holding.qty - sellQty;
@@ -1052,7 +941,7 @@
           orderType,
           price,
           qty: sellQty,
-          fee,
+          fee: sellFee,
           realizedPnl: realized,
           time: Date.now()
         });
@@ -1107,9 +996,11 @@
             orderType: 'Limit',
             fromLimit: true
           });
-          changed = true;
           if (res.ok) {
+            changed = true;
             this.emit('toast', { type: 'success', message: `Limit Filled: ${res.message}` });
+          } else {
+            remaining.unshift(ord);
           }
         } else {
           remaining.unshift(ord);

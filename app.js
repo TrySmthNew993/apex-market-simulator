@@ -41,7 +41,8 @@
   // DOM Cache
   const els = {
     regimePill: document.getElementById('regime-pill'),
-    speedBtns: document.querySelectorAll('.speed-btn'),
+    liveStatusPill: document.getElementById('live-status-pill'),
+    liveStatusText: document.getElementById('live-status-text'),
     headerEquityBtn: document.getElementById('header-equity-btn'),
     headerEquityVal: document.getElementById('header-equity-val'),
     newsBar: document.getElementById('news-bar'),
@@ -82,6 +83,7 @@
     ctypeBtns: document.querySelectorAll('.ctype-btn[data-ctype]'),
     chartCollapseBtn: document.getElementById('chart-collapse-btn'),
     chartContainer: document.getElementById('chart-container'),
+    ohlcTime: document.getElementById('ohlc-time'),
     ohlcO: document.getElementById('ohlc-o'),
     ohlcH: document.getElementById('ohlc-h'),
     ohlcL: document.getElementById('ohlc-l'),
@@ -139,11 +141,9 @@
     executionsList: document.getElementById('executions-list'),
     liquidateAllBtn: document.getElementById('liquidate-all-btn'),
 
-    // Sim View
-    simDayCounter: document.getElementById('sim-day-counter'),
-    btnAdvanceHour: document.getElementById('btn-advance-hour'),
-    btnAdvanceDay: document.getElementById('btn-advance-day'),
-    btnTriggerNews: document.getElementById('btn-trigger-news'),
+    // Sim / Feed View
+    simClockBadge: document.getElementById('sim-clock-badge'),
+    btnSyncNow: document.getElementById('btn-sync-now'),
     btnResetAccount: document.getElementById('btn-reset-account'),
     achCount: document.getElementById('ach-count'),
     achievementsList: document.getElementById('achievements-list'),
@@ -216,10 +216,8 @@
   }
 
   function syncActiveTradeData() {
-    if (engine.speed === 'live') {
-      engine.fetchRealCandles(ui.selectedAssetId, ui.timeframe);
-      engine.fetchRealOrderBookAndTrades(ui.selectedAssetId);
-    }
+    engine.fetchRealCandles(ui.selectedAssetId, ui.timeframe);
+    engine.fetchRealOrderBookAndTrades(ui.selectedAssetId);
   }
 
   function clearPctActive() {
@@ -230,6 +228,10 @@
   function renderHeader() {
     const summary = engine.getPortfolioSummary();
     els.headerEquityVal.textContent = formatUsd(summary.equity);
+
+    const anyLive = engine.liveStatus.crypto || engine.liveStatus.stock;
+    els.liveStatusPill.classList.toggle('offline', !anyLive);
+    els.liveStatusText.textContent = anyLive ? 'LIVE' : 'SYNC';
 
     const regime = engine.state.regime;
     els.regimePill.textContent = regime;
@@ -393,7 +395,8 @@
       chart.setData({
         candles: a.candles[ui.timeframe],
         chartType: ui.chartType,
-        decimals: a.priceDecimals
+        decimals: a.priceDecimals,
+        timeframe: ui.timeframe
       });
     }
   }
@@ -401,6 +404,12 @@
   function updateOhlcReadout(bar, ma7, ma25) {
     const a = engine.getAsset(ui.selectedAssetId);
     if (!a || !bar) return;
+    if (els.ohlcTime && bar.t) {
+      const d = new Date(bar.t);
+      els.ohlcTime.textContent = ui.timeframe === '1D'
+        ? `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+        : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
     els.ohlcO.textContent = bar.o.toFixed(a.priceDecimals);
     els.ohlcH.textContent = bar.h.toFixed(a.priceDecimals);
     els.ohlcL.textContent = bar.l.toFixed(a.priceDecimals);
@@ -458,7 +467,13 @@
     const tot = parseFloat(els.orderTotal.value);
     const p = getEffectiveOrderPrice();
     if (a && tot > 0 && p > 0) {
-      els.orderQty.value = roundTo(tot / p, a.qtyDecimals);
+      const stepFloor = Math.pow(10, a.qtyDecimals);
+      let q = Math.floor((tot / p) * stepFloor) / stepFloor;
+      if (ui.orderSide === 'sell') {
+        const availQ = engine.getAvailableQty(a.id);
+        q = Math.min(q, availQ);
+      }
+      els.orderQty.value = q > 0 ? q : '';
     } else {
       els.orderQty.value = '';
     }
@@ -678,8 +693,7 @@
 
   // Sim / Feed View
   function renderSimView() {
-    const simDays = Math.floor(engine.state.tickCount / 240) + 1;
-    els.simDayCounter.textContent = `Day ${simDays}`;
+    els.simClockBadge.textContent = new Date().toTimeString().slice(0, 8);
 
     const unlocked = engine.state.achievements;
     const count = Object.keys(unlocked).length;
@@ -766,19 +780,6 @@
 
     els.headerEquityBtn.addEventListener('click', () => switchView('assets'));
     els.newsBar.addEventListener('click', () => switchView('sim'));
-
-    // Speed buttons
-    els.speedBtns.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const raw = btn.dataset.speed;
-        const spd = raw === 'live' ? 'live' : Number(raw);
-        engine.setSpeed(spd);
-        updateSpeedButtonsUI(spd);
-        if (spd === 'live' && ui.activeView === 'trade') {
-          syncActiveTradeData();
-        }
-      });
-    });
 
     // Markets filter & search & sort
     els.marketSearch.addEventListener('input', (e) => {
@@ -936,7 +937,8 @@
 
         if (ui.orderSide === 'buy') {
           const availCash = engine.getAvailableCash();
-          const spendable = (availCash * pct) / (1 + FEE_RATE);
+          const buffer = pct >= 1 ? 0.998 : 1;
+          const spendable = (availCash * pct * buffer) / (1 + FEE_RATE);
           const rawQty = spendable / p;
           const stepFloor = Math.pow(10, a.qtyDecimals);
           const qty = Math.floor(rawQty * stepFloor) / stepFloor;
@@ -945,7 +947,7 @@
         } else {
           const availQty = engine.getAvailableQty(a.id);
           const stepFloor = Math.pow(10, a.qtyDecimals);
-          const qty = Math.floor(availQty * pct * stepFloor) / stepFloor;
+          const qty = Math.min(availQty, Math.floor((availQty * pct * stepFloor) + 1e-9) / stepFloor);
           els.orderQty.value = qty > 0 ? qty : '';
           syncTotalFromQty();
         }
@@ -1063,22 +1065,13 @@
       renderHeader();
     });
 
-    // Sim Hub Actions
-    els.btnAdvanceHour.addEventListener('click', () => {
-      if (engine.speed === 'live') {
-        engine.setSpeed(1);
-        updateSpeedButtonsUI(1);
-      }
-      engine.advanceTicks(12, '1 Hour');
+    // Desk Hub Actions
+    els.btnSyncNow.addEventListener('click', () => {
+      engine.syncCryptoTickers();
+      engine.syncStockTickers();
+      if (ui.activeView === 'trade') syncActiveTradeData();
+      showToast('Refreshing live quotes...', 'info');
     });
-    els.btnAdvanceDay.addEventListener('click', () => {
-      if (engine.speed === 'live') {
-        engine.setSpeed(1);
-        updateSpeedButtonsUI(1);
-      }
-      engine.advanceTicks(80, '1 Day');
-    });
-    els.btnTriggerNews.addEventListener('click', () => engine.triggerCatalyst(true));
 
     els.btnResetAccount.addEventListener('click', () => {
       if (!ui.confirmResetArmed) {
@@ -1097,13 +1090,6 @@
       renderHeader();
       renderAssetsView();
       renderSimView();
-    });
-  }
-
-  function updateSpeedButtonsUI(spd) {
-    els.speedBtns.forEach((b) => {
-      const val = b.dataset.speed === 'live' ? 'live' : Number(b.dataset.speed);
-      b.classList.toggle('active', val === spd);
     });
   }
 
@@ -1164,6 +1150,7 @@
         renderMarkets();
       } else if (ui.activeView === 'trade') {
         renderTradeHeaderAndChart(false);
+        renderOrderFormMeta();
         renderOrderBook();
         if (ui.tradeSubtab === 'holding' || ui.tradeSubtab === 'open') {
           renderTradeSubtab();
@@ -1171,8 +1158,7 @@
       } else if (ui.activeView === 'assets') {
         renderAssetsView();
       } else if (ui.activeView === 'sim') {
-        const simDays = Math.floor(engine.state.tickCount / 240) + 1;
-        els.simDayCounter.textContent = `Day ${simDays}`;
+        els.simClockBadge.textContent = new Date().toTimeString().slice(0, 8);
       }
       if (els.pairModal.classList.contains('open')) {
         renderSheetList();
@@ -1204,6 +1190,15 @@
       els.orderPrice.value = initAsset.price.toFixed(initAsset.priceDecimals);
     }
     engine.start();
+
+    // Keep real order book and live clock fresh
+    setInterval(() => {
+      if (ui.activeView === 'trade') {
+        engine.fetchRealOrderBookAndTrades(ui.selectedAssetId);
+      } else if (ui.activeView === 'sim') {
+        els.simClockBadge.textContent = new Date().toTimeString().slice(0, 8);
+      }
+    }, 4500);
   }
 
   init();
