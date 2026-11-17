@@ -178,6 +178,10 @@ body {
   color: var(--accent);
 }
 
+.speed-btn[data-speed="live"].active {
+  color: var(--green);
+}
+
 .equity-chip {
   display: flex;
   align-items: center;

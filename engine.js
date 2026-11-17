@@ -167,7 +167,12 @@
     constructor() {
       this.listeners = new Set();
       this.timer = null;
-      this.speed = 1; // 0 = paused, 1, 2, 5
+      this.speed = 'live'; // 'live' | 0 (paused) | 1 | 2 | 5
+      this.ws = null;
+      this.liveCryptoTimer = null;
+      this.liveStockTimer = null;
+      this.lastWsEmit = 0;
+      this.liveStatus = { crypto: false, stock: false };
       this.state = null;
       this.initOrLoad();
     }
@@ -300,15 +305,313 @@
         clearInterval(this.timer);
         this.timer = null;
       }
-      if (speed > 0) {
-        const intervalMs = speed === 1 ? 950 : speed === 2 ? 480 : 210;
-        this.timer = setInterval(() => this.stepTick(true), intervalMs);
+      if (speed === 'live') {
+        this.startLiveSync();
+      } else {
+        this.stopLiveSync();
+        if (speed > 0) {
+          const intervalMs = speed === 1 ? 950 : speed === 2 ? 480 : 210;
+          this.timer = setInterval(() => this.stepTick(true), intervalMs);
+        }
       }
       this.emit('speed', speed);
     }
 
     start() {
       this.setSpeed(this.speed);
+    }
+
+    startLiveSync() {
+      this.stopLiveSync();
+      if (typeof fetch === 'undefined') return;
+
+      this.syncCryptoTickers();
+      this.syncStockTickers();
+      this.connectCryptoWS();
+
+      this.liveCryptoTimer = setInterval(() => this.syncCryptoTickers(), 12000);
+      this.liveStockTimer = setInterval(() => this.syncStockTickers(), 30000);
+    }
+
+    stopLiveSync() {
+      if (this.ws) {
+        try { this.ws.close(); } catch (e) {}
+        this.ws = null;
+      }
+      if (this.liveCryptoTimer) {
+        clearInterval(this.liveCryptoTimer);
+        this.liveCryptoTimer = null;
+      }
+      if (this.liveStockTimer) {
+        clearInterval(this.liveStockTimer);
+        this.liveStockTimer = null;
+      }
+    }
+
+    connectCryptoWS() {
+      if (typeof WebSocket === 'undefined') return;
+      const streams = ASSET_DEFS
+        .filter((d) => d.kind === 'crypto')
+        .map((d) => `${d.symbol.toLowerCase()}usdt@miniTicker`)
+        .join('/');
+
+      try {
+        const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+        this.ws = ws;
+
+        ws.onmessage = (evt) => {
+          if (this.speed !== 'live') return;
+          try {
+            const msg = JSON.parse(evt.data);
+            const d = msg && msg.data;
+            if (!d || !d.s) return;
+            const sym = d.s.replace('USDT', '');
+            const a = this.state.assets[sym];
+            if (!a) return;
+
+            const nextP = roundTo(parseFloat(d.c), a.priceDecimals);
+            if (!nextP || isNaN(nextP)) return;
+
+            a.prevPrice = a.price;
+            a.price = nextP;
+            a.open24h = roundTo(parseFloat(d.o), a.priceDecimals) || a.open24h;
+            a.high24h = roundTo(parseFloat(d.h), a.priceDecimals) || a.high24h;
+            a.low24h = roundTo(parseFloat(d.l), a.priceDecimals) || a.low24h;
+            a.vol24h = Math.round(parseFloat(d.q) || a.vol24h);
+
+            // Update current live candle close/high/low across timeframes
+            Object.keys(TF_TICKS).forEach((tf) => {
+              const bars = a.candles[tf];
+              const last = bars && bars[bars.length - 1];
+              if (last) {
+                last.c = nextP;
+                if (nextP > last.h) last.h = nextP;
+                if (nextP < last.l) last.l = nextP;
+              }
+            });
+
+            this.liveStatus.crypto = true;
+            this.processOpenOrders();
+
+            const now = Date.now();
+            if (now - this.lastWsEmit > 350) {
+              this.lastWsEmit = now;
+              this.evaluateAchievements();
+              this.emit('tick', { live: true });
+            }
+          } catch (e) {}
+        };
+
+        ws.onclose = () => {
+          if (this.speed === 'live' && this.ws === ws) {
+            setTimeout(() => {
+              if (this.speed === 'live') this.connectCryptoWS();
+            }, 4000);
+          }
+        };
+      } catch (e) {}
+    }
+
+    async syncCryptoTickers() {
+      if (typeof fetch === 'undefined') return;
+      const syms = ASSET_DEFS.filter((d) => d.kind === 'crypto').map((d) => `"${d.symbol}USDT"`);
+      const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent('[' + syms.join(',') + ']')}`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const list = await res.json();
+        if (!Array.isArray(list)) return;
+
+        list.forEach((item) => {
+          const sym = item.symbol.replace('USDT', '');
+          const a = this.state.assets[sym];
+          if (!a) return;
+          a.prevPrice = a.price;
+          a.price = roundTo(parseFloat(item.lastPrice), a.priceDecimals);
+          a.open24h = roundTo(parseFloat(item.openPrice), a.priceDecimals);
+          a.high24h = roundTo(parseFloat(item.highPrice), a.priceDecimals);
+          a.low24h = roundTo(parseFloat(item.lowPrice), a.priceDecimals);
+          a.vol24h = Math.round(parseFloat(item.quoteVolume) || a.vol24h);
+
+          Object.keys(TF_TICKS).forEach((tf) => {
+            const bars = a.candles[tf];
+            const last = bars && bars[bars.length - 1];
+            if (last) {
+              last.c = a.price;
+              if (a.price > last.h) last.h = a.price;
+              if (a.price < last.l) last.l = a.price;
+            }
+          });
+        });
+
+        this.liveStatus.crypto = true;
+        this.processOpenOrders();
+        this.saveState();
+        this.emit('tick', { live: true });
+      } catch (e) {}
+    }
+
+    async syncStockTickers() {
+      if (typeof fetch === 'undefined') return;
+      const stocks = ASSET_DEFS.filter((d) => d.kind === 'stock');
+      const tasks = stocks.map(async (def) => {
+        const target = `https://query1.finance.yahoo.com/v8/finance/chart/${def.symbol}?interval=5m&range=1d`;
+        const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`;
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), 7000) : null;
+        try {
+          const res = await fetch(url, ctrl ? { signal: ctrl.signal } : undefined);
+          if (timer) clearTimeout(timer);
+          if (!res.ok) return;
+          const json = await res.json();
+          const result = json && json.chart && json.chart.result && json.chart.result[0];
+          if (!result || !result.meta) return;
+          const meta = result.meta;
+          const a = this.state.assets[def.id];
+          if (!a || !meta.regularMarketPrice) return;
+
+          a.prevPrice = a.price;
+          a.price = roundTo(meta.regularMarketPrice, a.priceDecimals);
+          if (meta.chartPreviousClose) a.open24h = roundTo(meta.chartPreviousClose, a.priceDecimals);
+          if (meta.regularMarketDayHigh) a.high24h = roundTo(meta.regularMarketDayHigh, a.priceDecimals);
+          if (meta.regularMarketDayLow) a.low24h = roundTo(meta.regularMarketDayLow, a.priceDecimals);
+          if (meta.regularMarketVolume) a.vol24h = Math.round(meta.regularMarketVolume * a.price);
+
+          const last = a.candles['1m'] && a.candles['1m'][a.candles['1m'].length - 1];
+          if (last) {
+            last.c = a.price;
+            if (a.price > last.h) last.h = a.price;
+            if (a.price < last.l) last.l = a.price;
+          }
+          this.liveStatus.stock = true;
+        } catch (e) {
+          if (timer) clearTimeout(timer);
+        }
+      });
+
+      await Promise.allSettled(tasks);
+      if (this.speed === 'live') {
+        this.processOpenOrders();
+        this.saveState();
+        this.emit('tick', { live: true });
+      }
+    }
+
+    async fetchRealCandles(assetId, tf) {
+      if (typeof fetch === 'undefined') return;
+      const a = this.state.assets[assetId];
+      if (!a) return;
+
+      if (a.kind === 'crypto') {
+        const interval = tf === '1D' ? '1d' : tf;
+        const url = `https://api.binance.com/api/v3/klines?symbol=${a.symbol}USDT&interval=${interval}&limit=88`;
+        try {
+          const res = await fetch(url);
+          if (!res.ok) return;
+          const rows = await res.json();
+          if (!Array.isArray(rows) || !rows.length) return;
+          a.candles[tf] = rows.map((r) => ({
+            t: r[0],
+            o: roundTo(parseFloat(r[1]), a.priceDecimals),
+            h: roundTo(parseFloat(r[2]), a.priceDecimals),
+            l: roundTo(parseFloat(r[3]), a.priceDecimals),
+            c: roundTo(parseFloat(r[4]), a.priceDecimals),
+            v: Math.round(parseFloat(r[7]) || parseFloat(r[5]) * parseFloat(r[4]))
+          }));
+          const last = a.candles[tf][a.candles[tf].length - 1];
+          if (last) a.price = last.c;
+          this.emit('tick', { live: true });
+        } catch (e) {}
+      } else {
+        const map = {
+          '1m': 'interval=1m&range=1d',
+          '5m': 'interval=5m&range=5d',
+          '15m': 'interval=15m&range=5d',
+          '1h': 'interval=1h&range=1mo',
+          '1D': 'interval=1d&range=3mo'
+        };
+        const target = `https://query1.finance.yahoo.com/v8/finance/chart/${a.symbol}?${map[tf] || map['5m']}`;
+        const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`;
+        try {
+          const res = await fetch(url);
+          if (!res.ok) return;
+          const json = await res.json();
+          const result = json && json.chart && json.chart.result && json.chart.result[0];
+          if (!result || !result.timestamp) return;
+          const ts = result.timestamp;
+          const q = result.indicators && result.indicators.quote && result.indicators.quote[0];
+          if (!q) return;
+
+          const bars = [];
+          for (let i = 0; i < ts.length; i++) {
+            if (q.open[i] == null || q.high[i] == null || q.low[i] == null || q.close[i] == null) continue;
+            bars.push({
+              t: ts[i] * 1000,
+              o: roundTo(q.open[i], a.priceDecimals),
+              h: roundTo(q.high[i], a.priceDecimals),
+              l: roundTo(q.low[i], a.priceDecimals),
+              c: roundTo(q.close[i], a.priceDecimals),
+              v: Math.round((q.volume && q.volume[i]) || 0)
+            });
+          }
+          if (bars.length) {
+            a.candles[tf] = bars.slice(-88);
+            a.price = a.candles[tf][a.candles[tf].length - 1].c;
+            this.liveStatus.stock = true;
+            this.emit('tick', { live: true });
+          }
+        } catch (e) {}
+      }
+    }
+
+    async fetchRealOrderBookAndTrades(assetId) {
+      if (typeof fetch === 'undefined') return;
+      const a = this.state.assets[assetId];
+      if (!a || a.kind !== 'crypto') return;
+
+      try {
+        const [depthRes, tradesRes] = await Promise.all([
+          fetch(`https://api.binance.com/api/v3/depth?symbol=${a.symbol}USDT&limit=8`),
+          fetch(`https://api.binance.com/api/v3/trades?symbol=${a.symbol}USDT&limit=14`)
+        ]);
+
+        if (depthRes.ok) {
+          const depth = await depthRes.json();
+          if (depth.asks && depth.bids) {
+            const asksRaw = depth.asks.slice(0, 6).map((x) => ({
+              price: roundTo(parseFloat(x[0]), a.priceDecimals),
+              qty: roundTo(parseFloat(x[1]), a.qtyDecimals)
+            }));
+            const bidsRaw = depth.bids.slice(0, 6).map((x) => ({
+              price: roundTo(parseFloat(x[0]), a.priceDecimals),
+              qty: roundTo(parseFloat(x[1]), a.qtyDecimals)
+            }));
+            let maxQty = 0;
+            asksRaw.forEach((r) => { if (r.qty > maxQty) maxQty = r.qty; });
+            bidsRaw.forEach((r) => { if (r.qty > maxQty) maxQty = r.qty; });
+            maxQty = Math.max(1e-9, maxQty);
+            asksRaw.sort((x, y) => y.price - x.price);
+            bidsRaw.sort((x, y) => y.price - x.price);
+            asksRaw.forEach((r) => { r.depthPct = Math.min(100, Math.round((r.qty / maxQty) * 100)); });
+            bidsRaw.forEach((r) => { r.depthPct = Math.min(100, Math.round((r.qty / maxQty) * 100)); });
+            a.realOrderBook = { asks: asksRaw, bids: bidsRaw, ts: Date.now() };
+          }
+        }
+
+        if (tradesRes.ok) {
+          const trades = await tradesRes.json();
+          if (Array.isArray(trades) && trades.length) {
+            a.recentTrades = trades.slice().reverse().slice(0, 14).map((t) => ({
+              price: roundTo(parseFloat(t.price), a.priceDecimals),
+              qty: roundTo(parseFloat(t.qty), a.qtyDecimals),
+              side: t.isBuyerMaker ? 'sell' : 'buy',
+              time: t.time
+            }));
+          }
+        }
+
+        this.emit('tick', { live: true });
+      } catch (e) {}
     }
 
     getAssetsList() {
@@ -570,6 +873,10 @@
     generateOrderBook(assetId) {
       const a = this.state.assets[assetId];
       if (!a) return { asks: [], bids: [] };
+
+      if (this.speed === 'live' && a.realOrderBook && Date.now() - a.realOrderBook.ts < 15000) {
+        return a.realOrderBook;
+      }
 
       const p = a.price;
       const spreadStep = Math.max(Math.pow(10, -a.priceDecimals), p * 0.00045);

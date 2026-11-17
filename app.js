@@ -183,6 +183,7 @@
       renderOrderFormMeta();
       renderOrderBook();
       renderTradeSubtab();
+      syncActiveTradeData();
       setTimeout(() => chart && chart.draw(), 30);
     } else if (viewName === 'markets') {
       renderMarkets();
@@ -210,6 +211,14 @@
       renderOrderFormMeta();
       renderOrderBook();
       renderTradeSubtab();
+      syncActiveTradeData();
+    }
+  }
+
+  function syncActiveTradeData() {
+    if (engine.speed === 'live') {
+      engine.fetchRealCandles(ui.selectedAssetId, ui.timeframe);
+      engine.fetchRealOrderBookAndTrades(ui.selectedAssetId);
     }
   }
 
@@ -761,9 +770,13 @@
     // Speed buttons
     els.speedBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
-        const spd = Number(btn.dataset.speed);
+        const raw = btn.dataset.speed;
+        const spd = raw === 'live' ? 'live' : Number(raw);
         engine.setSpeed(spd);
-        els.speedBtns.forEach((b) => b.classList.toggle('active', Number(b.dataset.speed) === spd));
+        updateSpeedButtonsUI(spd);
+        if (spd === 'live' && ui.activeView === 'trade') {
+          syncActiveTradeData();
+        }
       });
     });
 
@@ -839,6 +852,7 @@
         ui.timeframe = btn.dataset.tf;
         els.tfBtns.forEach((b) => b.classList.toggle('active', b === btn));
         renderTradeHeaderAndChart(false);
+        syncActiveTradeData();
       });
     });
 
@@ -1050,8 +1064,20 @@
     });
 
     // Sim Hub Actions
-    els.btnAdvanceHour.addEventListener('click', () => engine.advanceTicks(12, '1 Hour'));
-    els.btnAdvanceDay.addEventListener('click', () => engine.advanceTicks(80, '1 Day'));
+    els.btnAdvanceHour.addEventListener('click', () => {
+      if (engine.speed === 'live') {
+        engine.setSpeed(1);
+        updateSpeedButtonsUI(1);
+      }
+      engine.advanceTicks(12, '1 Hour');
+    });
+    els.btnAdvanceDay.addEventListener('click', () => {
+      if (engine.speed === 'live') {
+        engine.setSpeed(1);
+        updateSpeedButtonsUI(1);
+      }
+      engine.advanceTicks(80, '1 Day');
+    });
     els.btnTriggerNews.addEventListener('click', () => engine.triggerCatalyst(true));
 
     els.btnResetAccount.addEventListener('click', () => {
@@ -1071,6 +1097,13 @@
       renderHeader();
       renderAssetsView();
       renderSimView();
+    });
+  }
+
+  function updateSpeedButtonsUI(spd) {
+    els.speedBtns.forEach((b) => {
+      const val = b.dataset.speed === 'live' ? 'live' : Number(b.dataset.speed);
+      b.classList.toggle('active', val === spd);
     });
   }
 
